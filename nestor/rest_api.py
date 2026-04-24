@@ -474,8 +474,11 @@ def _query_records_once(
     boot_ids: list[int],
     seqno_min: int | None,
     seqno_max: int | None,
+    limit: int = RECORDS_DEFAULT_LIMIT,
 ) -> tuple[list[CANFrameRecordCommitted], int | None]:
-    records = list(database.get_records(device=device, boot_ids=boot_ids, seqno_min=seqno_min, seqno_max=seqno_max))
+    records = list(database.get_records(
+        device=device, boot_ids=boot_ids, seqno_min=seqno_min, seqno_max=seqno_max, limit=limit,
+    ))
     records.sort(key=lambda record: record.seqno)
     latest_seqno_seen = records[-1].seqno if records else None
     return records, latest_seqno_seen
@@ -588,6 +591,7 @@ async def get_records(
                 boot_ids=boot_ids,
                 seqno_min=seqno_min,
                 seqno_max=seqno_max,
+                limit=limit,
             )
             total_matched = len(matching_records)
             LOGGER.debug(
@@ -599,8 +603,7 @@ async def get_records(
             )
 
             if total_matched > 0:
-                paged_records = matching_records[:limit]
-                serialized = [_serialize_record(record) for record in paged_records]
+                serialized = [_serialize_record(record) for record in matching_records]
                 LOGGER.info(
                     "Records query completed with data: device=%r poll_count=%d total_matched=%d returned=%d",
                     device,
