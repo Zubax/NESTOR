@@ -297,7 +297,8 @@ async def commit(
         )
 
     try:
-        last_seqno = database.commit(device_uid=device_uid, device=resolved_device, records=accepted_records)
+        loop = asyncio.get_running_loop()
+        last_seqno = await loop.run_in_executor(None, database.commit, device_uid, resolved_device, accepted_records)
     except Exception:
         LOGGER.critical(
             "Unexpected commit exception: device_uid=%d device=%r",
@@ -591,13 +592,15 @@ async def get_records(
     try:
         while True:
             poll_count += 1
-            matching_records, latest_seqno_seen = _query_records_once(
-                database=database,
-                device=device,
-                boot_ids=boot_ids,
-                seqno_min=seqno_min,
-                seqno_max=seqno_max,
-                limit=limit,
+            matching_records, latest_seqno_seen = await loop.run_in_executor(
+                None,
+                _query_records_once,
+                database,
+                device,
+                boot_ids,
+                seqno_min,
+                seqno_max,
+                limit,
             )
             total_matched = len(matching_records)
             LOGGER.debug(
