@@ -64,7 +64,11 @@ class Database(ABC):
 
     @abstractmethod
     def get_records(
-        self, device: str, boot_ids: Iterable[int], seqno_min: int | None, seqno_max: int | None,
+        self,
+        device: str,
+        boot_ids: Iterable[int],
+        seqno_min: int | None,
+        seqno_max: int | None,
         limit: int | None = None,
     ) -> Iterable[CANFrameRecordCommitted]:
         raise NotImplementedError
@@ -430,7 +434,11 @@ class SqliteDatabase(Database):
             return out
 
     def get_records(
-        self, device: str, boot_ids: Iterable[int], seqno_min: int | None, seqno_max: int | None,
+        self,
+        device: str,
+        boot_ids: Iterable[int],
+        seqno_min: int | None,
+        seqno_max: int | None,
         limit: int | None = None,
     ) -> Iterable[CANFrameRecordCommitted]:
         if seqno_min is not None and seqno_max is not None and seqno_min > seqno_max:
@@ -916,7 +924,12 @@ class _DatabaseTests(unittest.TestCase):
                 return []
 
             def get_records(
-                self, device: str, boot_ids: Iterable[int], seqno_min: int | None, seqno_max: int | None
+                self,
+                device: str,
+                boot_ids: Iterable[int],
+                seqno_min: int | None,
+                seqno_max: int | None,
+                limit: int | None = None,
             ) -> Iterable[CANFrameRecordCommitted]:
                 return []
 

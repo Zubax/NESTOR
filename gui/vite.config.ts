@@ -4,7 +4,7 @@ export default defineConfig({
   server: {
     proxy: {
       '/cf3d/api/v1': {
-        target: 'https://cyphalcloud.zubax.com',
+        target: 'http://localhost:8000',
         changeOrigin: true,
       },
     },

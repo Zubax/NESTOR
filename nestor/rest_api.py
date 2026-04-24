@@ -476,9 +476,15 @@ def _query_records_once(
     seqno_max: int | None,
     limit: int = RECORDS_DEFAULT_LIMIT,
 ) -> tuple[list[CANFrameRecordCommitted], int | None]:
-    records = list(database.get_records(
-        device=device, boot_ids=boot_ids, seqno_min=seqno_min, seqno_max=seqno_max, limit=limit,
-    ))
+    records = list(
+        database.get_records(
+            device=device,
+            boot_ids=boot_ids,
+            seqno_min=seqno_min,
+            seqno_max=seqno_max,
+            limit=limit,
+        )
+    )
     records.sort(key=lambda record: record.seqno)
     latest_seqno_seen = records[-1].seqno if records else None
     return records, latest_seqno_seen
@@ -791,7 +797,12 @@ class _FakeDatabase(Database):
         return list(self.boots_by_device.get(device, []))
 
     def get_records(
-        self, device: str, boot_ids: Iterable[int], seqno_min: int | None, seqno_max: int | None
+        self,
+        device: str,
+        boot_ids: Iterable[int],
+        seqno_min: int | None,
+        seqno_max: int | None,
+        limit: int | None = None,
     ) -> Iterable[CANFrameRecordCommitted]:
         if "get_records" in self.fail_methods:
             raise RuntimeError("forced records failure")
@@ -804,7 +815,7 @@ class _FakeDatabase(Database):
             source = list(scripted.pop(0))
         else:
             source = list(self.records_by_device.get(device, []))
-        return self._filter_records(source, boot_list, seqno_min, seqno_max)
+        return self._filter_records(source, boot_list, seqno_min, seqno_max, limit)
 
     @staticmethod
     def _filter_records(
@@ -812,6 +823,7 @@ class _FakeDatabase(Database):
         boot_ids: list[int],
         seqno_min: int | None,
         seqno_max: int | None,
+        limit: int | None = None,
     ) -> list[CANFrameRecordCommitted]:
         if seqno_min is not None and seqno_max is not None and seqno_min > seqno_max:
             return []
@@ -827,6 +839,8 @@ class _FakeDatabase(Database):
                 continue
             out.append(record)
         out.sort(key=lambda value: value.seqno)
+        if limit is not None:
+            out = out[:limit]
         return out
 
 
