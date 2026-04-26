@@ -361,11 +361,8 @@ async def commit(
 async def get_devices(
     database: Annotated[Database, Depends(get_database)],
 ) -> DevicesResponse:
-    loop = asyncio.get_running_loop()
     try:
-        devices = await loop.run_in_executor(
-            None, lambda: [_serialize_device_info(item) for item in database.get_devices()]
-        )
+        devices = [_serialize_device_info(item) for item in database.get_devices()]
     except Exception:
         LOGGER.critical("Unexpected exception while listing devices", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="internal server error")
@@ -447,11 +444,8 @@ async def get_boots(
         earliest_commit,
         latest_commit,
     )
-    loop = asyncio.get_running_loop()
     try:
-        boots = await loop.run_in_executor(
-            None, lambda: list(database.get_boots(device, earliest_commit, latest_commit))
-        )
+        boots = list(database.get_boots(device, earliest_commit, latest_commit))
     except Exception:
         LOGGER.critical(
             "Unexpected exception while querying boots: device=%r earliest_commit=%r latest_commit=%r",
@@ -756,16 +750,6 @@ def create_app(database: Database, gui_dir: Path | None = None) -> FastAPI:
     created_app.state.database = database
     created_app.include_router(router)
 
-    import time as _time
-
-    @created_app.middleware("http")
-    async def _request_timing_middleware(request: Request, call_next):
-        t0 = _time.monotonic()
-        LOGGER.info("TIMING middleware entered: %s %s", request.method, request.url.path)
-        response = await call_next(request)
-        elapsed_ms = (_time.monotonic() - t0) * 1000
-        LOGGER.info("TIMING middleware done: %s %s %.1fms", request.method, request.url.path, elapsed_ms)
-        return response
 
     # Serve GUI static files if directory exists
     if gui_dir is None:
