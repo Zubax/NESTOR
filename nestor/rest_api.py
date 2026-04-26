@@ -744,6 +744,17 @@ def create_app(database: Database, gui_dir: Path | None = None) -> FastAPI:
     created_app.state.database = database
     created_app.include_router(router)
 
+    import time as _time
+
+    @created_app.middleware("http")
+    async def _request_timing_middleware(request: Request, call_next):
+        t0 = _time.monotonic()
+        LOGGER.info("TIMING middleware entered: %s %s", request.method, request.url.path)
+        response = await call_next(request)
+        elapsed_ms = (_time.monotonic() - t0) * 1000
+        LOGGER.info("TIMING middleware done: %s %s %.1fms", request.method, request.url.path, elapsed_ms)
+        return response
+
     # Serve GUI static files if directory exists
     if gui_dir is None:
         gui_dir = Path(__file__).parent.parent / "gui" / "dist"
