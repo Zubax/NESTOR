@@ -96,7 +96,7 @@ class SqliteDatabase(Database):
       Core dedup/ACK behavior does not depend on this column.
     """
 
-    _BUSY_TIMEOUT_MS = 5000
+    _BUSY_TIMEOUT_MS = 100
     # SQLite limits host parameters per statement. Keep chunks below common defaults for portability.
     _SQL_VARIABLE_CHUNK = 900
 
