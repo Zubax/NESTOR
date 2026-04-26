@@ -135,7 +135,7 @@ def _serialize_device_info(device: DeviceInfo) -> DeviceDTO:
     return DeviceDTO(device=device.device, last_heard_ts=device.last_heard_ts, last_uid=device.last_uid)
 
 
-def _parse_device_uid(
+async def _parse_device_uid(
     device_uid: Annotated[str, Query(min_length=1, description="uint64 integer literal (auto-radix)")],
 ) -> int:
     try:
@@ -161,7 +161,7 @@ def _parse_device_uid(
     return value
 
 
-def get_database(request: Request) -> Database:
+async def get_database(request: Request) -> Database:
     database = getattr(request.app.state, "database", None)
     if not isinstance(database, Database):
         LOGGER.critical(
