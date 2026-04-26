@@ -96,7 +96,7 @@ class SqliteDatabase(Database):
       Core dedup/ACK behavior does not depend on this column.
     """
 
-    _BUSY_TIMEOUT_MS = 100
+    _BUSY_TIMEOUT_MS = 5000
     # SQLite limits host parameters per statement. Keep chunks below common defaults for portability.
     _SQL_VARIABLE_CHUNK = 900
 
@@ -104,7 +104,7 @@ class SqliteDatabase(Database):
         self._filename = filename if filename is not None else ":memory:"
         self._lock = threading.RLock()
         LOGGER.info("Opening SQLite database at %s", self._filename)
-        self._connection = sqlite3.connect(self._filename, check_same_thread=False)
+        self._connection = sqlite3.connect(self._filename, check_same_thread=False, isolation_level=None)
         self._configure_connection()
         self._initialize_schema()
 
