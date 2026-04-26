@@ -358,11 +358,14 @@ async def commit(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-def get_devices(
+async def get_devices(
     database: Annotated[Database, Depends(get_database)],
 ) -> DevicesResponse:
+    loop = asyncio.get_running_loop()
     try:
-        devices = [_serialize_device_info(item) for item in database.get_devices()]
+        devices = await loop.run_in_executor(
+            None, lambda: [_serialize_device_info(item) for item in database.get_devices()]
+        )
     except Exception:
         LOGGER.critical("Unexpected exception while listing devices", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="internal server error")
@@ -432,7 +435,7 @@ async def ping():
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-def get_boots(
+async def get_boots(
     device: Annotated[str, Query(min_length=1, description="Device identifier")],
     earliest_commit: Annotated[datetime | None, Query(description="Lower commit-time bound (ISO-8601)")] = None,
     latest_commit: Annotated[datetime | None, Query(description="Upper commit-time bound (ISO-8601)")] = None,
@@ -444,8 +447,11 @@ def get_boots(
         earliest_commit,
         latest_commit,
     )
+    loop = asyncio.get_running_loop()
     try:
-        boots = list(database.get_boots(device, earliest_commit, latest_commit))
+        boots = await loop.run_in_executor(
+            None, lambda: list(database.get_boots(device, earliest_commit, latest_commit))
+        )
     except Exception:
         LOGGER.critical(
             "Unexpected exception while querying boots: device=%r earliest_commit=%r latest_commit=%r",
