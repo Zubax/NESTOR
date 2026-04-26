@@ -334,7 +334,9 @@ class SqliteDatabase(Database):
     def get_boots(
         self, device: str, earliest_commit: datetime | None, latest_commit: datetime | None
     ) -> Iterable[Boot]:
+        import time as _t
         with self._lock:
+            _ta = _t.monotonic()
             LOGGER.debug(
                 "Fetching boots for device=%r earliest_commit=%r latest_commit=%r",
                 device,
@@ -343,6 +345,8 @@ class SqliteDatabase(Database):
             )
             cursor = self._connection.cursor()
             device_id = self._get_device_id(cursor=cursor, device=device)
+            _tb = _t.monotonic()
+            LOGGER.warning("TIMING get_device_id=%.3fs", _tb - _ta)
             if device_id is None:
                 LOGGER.info("No data for unknown device=%r", device)
                 return []
@@ -400,6 +404,8 @@ class SqliteDatabase(Database):
                     device_id,
                 ),
             )
+            _tc = _t.monotonic()
+            LOGGER.warning("TIMING main_query=%.3fs", _tc - _tb)
 
             out: list[Boot] = []
             for row in cursor.fetchall():
