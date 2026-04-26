@@ -438,6 +438,8 @@ async def get_boots(
     latest_commit: Annotated[datetime | None, Query(description="Upper commit-time bound (ISO-8601)")] = None,
     database: Database = Depends(get_database),
 ) -> BootsResponse:
+    import time as _t
+    _t0 = _t.monotonic()
     LOGGER.debug(
         "Boots query request: device=%r earliest_commit=%r latest_commit=%r",
         device,
@@ -446,6 +448,8 @@ async def get_boots(
     )
     try:
         boots = list(database.get_boots(device, earliest_commit, latest_commit))
+        _t1 = _t.monotonic()
+        LOGGER.warning("TIMING handler_entry_to_db_done=%.3fs", _t1 - _t0)
     except Exception:
         LOGGER.critical(
             "Unexpected exception while querying boots: device=%r earliest_commit=%r latest_commit=%r",
