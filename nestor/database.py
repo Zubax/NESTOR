@@ -343,7 +343,15 @@ class SqliteDatabase(Database):
                 earliest_commit,
                 latest_commit,
             )
-            cursor = self._connection.cursor()
+            # Use a fresh connection for reads to bypass stale connection state.
+            # For in-memory databases, reuse the existing connection (separate connections can't share data).
+            if self._filename == ":memory:":
+                read_conn = self._connection
+            else:
+                read_conn = sqlite3.connect(self._filename, check_same_thread=False, isolation_level=None)
+                read_conn.execute(f"PRAGMA busy_timeout={self._BUSY_TIMEOUT_MS}")
+                read_conn.execute("PRAGMA journal_mode=WAL")
+            cursor = read_conn.cursor()
             device_id = self._get_device_id(cursor=cursor, device=device)
             _tb = _t.monotonic()
             LOGGER.warning("TIMING get_device_id=%.3fs", _tb - _ta)
@@ -430,6 +438,8 @@ class SqliteDatabase(Database):
                     ),
                 )
                 out.append(Boot(boot_id=int(row[0]), first_record=first_record, last_record=last_record))
+            if read_conn is not self._connection:
+                read_conn.close()
             LOGGER.info(
                 "Fetched %d boots for device=%r earliest_commit=%r latest_commit=%r",
                 len(out),
