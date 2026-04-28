@@ -446,7 +446,9 @@ async def get_boots(
     )
     try:
         loop = asyncio.get_running_loop()
-        boots = await loop.run_in_executor(None, lambda: list(database.get_boots(device, earliest_commit, latest_commit)))
+        boots = await loop.run_in_executor(
+            None, lambda: list(database.get_boots(device, earliest_commit, latest_commit))
+        )
     except Exception:
         LOGGER.critical(
             "Unexpected exception while querying boots: device=%r earliest_commit=%r latest_commit=%r",
@@ -750,7 +752,6 @@ def create_app(database: Database, gui_dir: Path | None = None) -> FastAPI:
     created_app = FastAPI(lifespan=_lifespan)
     created_app.state.database = database
     created_app.include_router(router)
-
 
     # Serve GUI static files if directory exists
     if gui_dir is None:

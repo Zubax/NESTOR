@@ -733,8 +733,7 @@ class SqliteDatabase(Database):
             "Backfilling boot summaries from existing can_frames rows=%d",
             can_frame_count,
         )
-        cursor.execute(
-            """
+        cursor.execute("""
             INSERT INTO boot_summaries
             (
                 device_id,
@@ -753,8 +752,7 @@ class SqliteDatabase(Database):
                 MAX(commit_ts) AS last_commit_ts
             FROM can_frames
             GROUP BY device_id, boot_id
-            """
-        )
+            """)
         LOGGER.info("Boot summary backfill complete: rows=%d", cursor.rowcount)
 
     @staticmethod
@@ -1029,14 +1027,12 @@ class _DatabaseTests(unittest.TestCase):
         )
 
         cursor = self.db._connection.cursor()
-        cursor.execute(
-            """
+        cursor.execute("""
             SELECT boot_id, first_seqno, last_seqno, first_commit_ts, last_commit_ts
             FROM boot_summaries
             WHERE device_id=(SELECT device_id FROM devices WHERE device='alpha')
             ORDER BY boot_id ASC
-            """
-        )
+            """)
         rows = cursor.fetchall()
         self.assertEqual([(100, 1, 5), (200, 9, 9)], [(int(row[0]), int(row[1]), int(row[2])) for row in rows])
         self.assertTrue(all(int(row[3]) > 0 for row in rows))
