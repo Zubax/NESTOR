@@ -1,11 +1,11 @@
 # Tools
 
-This folder contains standalone self-contained helper scripts for data ingestion, fetching, and server validation.
+This folder contains standalone self-contained helper scripts for data ingestion and server validation.
 
 ## `nestor_ingest.py`
 
-Uploads one or more raw `.cf3d` files to the server.
-The script reads file bytes, sends them in chunks, retries on transient failures, and prints a final report.
+Uploads one or more raw `.cf3d` files to the server commit endpoint.
+The script streams file bytes in fixed-size chunks, retries transient failures with backoff, and prints a final ingest report.
 
 ```bash
 python tools/nestor_ingest.py --server http://127.0.0.1:8000 --device_uid 0x123 --device "Vehicle-A" data/*.cf3d
@@ -13,7 +13,8 @@ python tools/nestor_ingest.py --server http://127.0.0.1:8000 --device_uid 0x123 
 
 ## `e2e_test.py`
 
-Runs a full local E2E check; intended for development only. Read the contents for details.
+Runs a full local end-to-end validation against a real `nestor serve` process.
+It starts the server, uploads the golden dataset with `nestor_ingest.py`, then verifies the query endpoints.
 
 ## `serve_smoke_test.py`
 

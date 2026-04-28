@@ -371,12 +371,6 @@ async def get_devices(
     return DevicesResponse(devices=devices)
 
 
-@router.get("/cf3d/api/v1/ping")
-async def ping():
-    """Trivial async endpoint for latency diagnosis."""
-    return {"ok": True}
-
-
 @router.get(
     "/cf3d/api/v1/boots",
     response_model=BootsResponse,
