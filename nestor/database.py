@@ -591,7 +591,6 @@ class SqliteDatabase(Database):
                     ON boots (device_id, first_commit_ts, last_commit_ts, boot_id);
 
                 """)
-            self._backfill_boots(cursor)
             self._connection.commit()
             LOGGER.info("SQLite schema is ready")
 
@@ -704,42 +703,6 @@ class SqliteDatabase(Database):
             boot_rows,
         )
         LOGGER.debug("Refreshed boots for device_id=%d rows=%d", device_id, len(boot_rows))
-
-    def _backfill_boots(self, cursor: sqlite3.Cursor) -> None:
-        cursor.execute("SELECT COUNT(*) FROM boots")
-        existing_boot_count = int(cursor.fetchone()[0])
-        if existing_boot_count > 0:
-            LOGGER.debug("Boot backfill skipped because boots table already has %d rows", existing_boot_count)
-            return
-
-        cursor.execute("SELECT COUNT(*) FROM can_frames")
-        can_frame_count = int(cursor.fetchone()[0])
-        if can_frame_count == 0:
-            LOGGER.debug("Boot backfill skipped because can_frames is empty")
-            return
-
-        LOGGER.info("Backfilling boots from existing can_frames rows=%d", can_frame_count)
-        cursor.execute("""
-            INSERT INTO boots
-            (
-                device_id,
-                boot_id,
-                first_seqno,
-                last_seqno,
-                first_commit_ts,
-                last_commit_ts
-            )
-            SELECT
-                device_id,
-                boot_id,
-                MIN(seqno) AS first_seqno,
-                MAX(seqno) AS last_seqno,
-                MIN(commit_ts) AS first_commit_ts,
-                MAX(commit_ts) AS last_commit_ts
-            FROM can_frames
-            GROUP BY device_id, boot_id
-            """)
-        LOGGER.info("Boot backfill complete: rows=%d", cursor.rowcount)
 
     @staticmethod
     def _record_matches_row(device_uid: int, record: CANFrameRecord, row: _StoredFrameRow) -> bool:
@@ -1056,85 +1019,6 @@ class _DatabaseTests(unittest.TestCase):
                 self.assertEqual(b"\x77", bytes(records[0].frame.data))
             finally:
                 second.close()
-
-    def test_legacy_database_boot_backfill(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            db_path = Path(temp_dir) / "legacy.sqlite3"
-            legacy = sqlite3.connect(str(db_path))
-            legacy.executescript("""
-                CREATE TABLE devices
-                (
-                    device_id        INTEGER PRIMARY KEY,
-                    device           TEXT    NOT NULL UNIQUE,
-                    last_seqno       INTEGER NOT NULL DEFAULT 0,
-                    last_heard_ts    INTEGER NOT NULL DEFAULT 0,
-                    last_device_uid  INTEGER NOT NULL
-                );
-
-                CREATE TABLE can_frames
-                (
-                    id                INTEGER PRIMARY KEY AUTOINCREMENT,
-                    commit_ts         INTEGER NOT NULL,
-                    device_uid        INTEGER NOT NULL,
-                    device_id         INTEGER NOT NULL,
-                    hw_ts_us          INTEGER NOT NULL,
-                    boot_id           INTEGER NOT NULL,
-                    seqno             INTEGER NOT NULL,
-                    can_id_with_flags INTEGER NOT NULL,
-                    data              BLOB    NOT NULL CHECK (length(data) <= 64),
-                    FOREIGN KEY (device_id) REFERENCES devices(device_id),
-                    UNIQUE (device_id, seqno)
-                );
-
-                CREATE INDEX can_frames_device_boot_seq
-                    ON can_frames (device_id, boot_id, seqno);
-
-                CREATE INDEX can_frames_device_commit
-                    ON can_frames (device_id, commit_ts);
-
-                CREATE INDEX can_frames_device_boot_commit
-                    ON can_frames (device_id, boot_id, commit_ts);
-                """)
-            legacy.execute(
-                "INSERT INTO devices (device_id, device, last_seqno, last_heard_ts, last_device_uid) VALUES (?, ?, ?, ?, ?)",
-                (1, "alpha", 2, 1704067200, 123),
-            )
-            legacy.executemany(
-                """
-                INSERT INTO can_frames
-                (
-                    commit_ts,
-                    device_uid,
-                    device_id,
-                    hw_ts_us,
-                    boot_id,
-                    seqno,
-                    can_id_with_flags,
-                    data
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                [
-                    (1704067200, 123, 1, 10, 100, 1, 0x123, b"\x01"),
-                    (1704067201, 123, 1, 20, 100, 2, 0x123, b"\x02"),
-                ],
-            )
-            legacy.commit()
-            legacy.close()
-
-            reopened = SqliteDatabase(str(db_path))
-            try:
-                boots = list(reopened.get_boots("alpha", None, None))
-                self.assertEqual(1, len(boots))
-                self.assertEqual(100, boots[0].boot_id)
-                self.assertEqual(1, boots[0].first_record.seqno)
-                self.assertEqual(2, boots[0].last_record.seqno)
-
-                cursor = reopened._connection.cursor()
-                cursor.execute("SELECT boot_id, first_seqno, last_seqno FROM boots")
-                self.assertEqual([(100, 1, 2)], [(int(row[0]), int(row[1]), int(row[2])) for row in cursor.fetchall()])
-            finally:
-                reopened.close()
 
     def test_database_abstract_methods_raise_not_implemented(self) -> None:
         class _Probe(Database):
