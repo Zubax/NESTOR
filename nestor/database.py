@@ -59,7 +59,12 @@ class Database(ABC):
 
     @abstractmethod
     def get_boots(
-        self, device: str, earliest_commit: datetime | None, latest_commit: datetime | None
+        self,
+        device: str,
+        earliest_commit: datetime | None,
+        latest_commit: datetime | None,
+        page: int,
+        page_size: int,
     ) -> Iterable[Boot]:
         raise NotImplementedError
 
@@ -339,14 +344,26 @@ class SqliteDatabase(Database):
             return result
 
     def get_boots(
-        self, device: str, earliest_commit: datetime | None, latest_commit: datetime | None
+        self,
+        device: str,
+        earliest_commit: datetime | None,
+        latest_commit: datetime | None,
+        page: int,
+        page_size: int,
     ) -> Iterable[Boot]:
+        if page < 1:
+            raise ValueError(f"page must be >= 1, got {page}")
+        if page_size < 1:
+            raise ValueError(f"page_size must be >= 1, got {page_size}")
+
         with self._read_lock:
             LOGGER.debug(
-                "Fetching boots for device=%r earliest_commit=%r latest_commit=%r",
+                "Fetching boots for device=%r earliest_commit=%r latest_commit=%r page=%d page_size=%d",
                 device,
                 earliest_commit,
                 latest_commit,
+                page,
+                page_size,
             )
             cursor = self._read_connection.cursor()
             device_id = self._get_device_id(cursor=cursor, device=device)
@@ -356,11 +373,12 @@ class SqliteDatabase(Database):
 
             earliest_ts = None if earliest_commit is None else _datetime_to_epoch_seconds(earliest_commit)
             latest_ts = None if latest_commit is None else _datetime_to_epoch_seconds(latest_commit)
+            offset = (page - 1) * page_size
 
             cursor.execute(
                 """
                 SELECT
-                    grouped.boot_id,
+                    paged.boot_id,
                     first_frame.hw_ts_us,
                     first_frame.boot_id,
                     first_frame.seqno,
@@ -386,16 +404,18 @@ class SqliteDatabase(Database):
                             (? IS NULL OR MIN(commit_ts) <= ?)
                             AND
                             (? IS NULL OR MAX(commit_ts) >= ?)
-                    ) AS grouped
+                        ORDER BY boot_id DESC
+                        LIMIT ? OFFSET ?
+                    ) AS paged
                 JOIN can_frames AS first_frame
                     ON first_frame.device_id=?
-                    AND first_frame.boot_id=grouped.boot_id
-                    AND first_frame.seqno=grouped.min_seqno
+                    AND first_frame.boot_id=paged.boot_id
+                    AND first_frame.seqno=paged.min_seqno
                 JOIN can_frames AS last_frame
                     ON last_frame.device_id=?
-                    AND last_frame.boot_id=grouped.boot_id
-                    AND last_frame.seqno=grouped.max_seqno
-                ORDER BY grouped.boot_id ASC
+                    AND last_frame.boot_id=paged.boot_id
+                    AND last_frame.seqno=paged.max_seqno
+                ORDER BY paged.boot_id DESC
                 """,
                 (
                     device_id,
@@ -403,6 +423,8 @@ class SqliteDatabase(Database):
                     latest_ts,
                     earliest_ts,
                     earliest_ts,
+                    page_size,
+                    offset,
                     device_id,
                     device_id,
                 ),
@@ -432,11 +454,13 @@ class SqliteDatabase(Database):
                 )
                 out.append(Boot(boot_id=int(row[0]), first_record=first_record, last_record=last_record))
             LOGGER.info(
-                "Fetched %d boots for device=%r earliest_commit=%r latest_commit=%r",
+                "Fetched %d boots for device=%r earliest_commit=%r latest_commit=%r page=%d page_size=%d",
                 len(out),
                 device,
                 earliest_commit,
                 latest_commit,
+                page,
+                page_size,
             )
             return out
 
@@ -949,6 +973,8 @@ class _DatabaseTests(unittest.TestCase):
                 "alpha",
                 earliest_commit=datetime(2024, 1, 1, 1, 0, 0),
                 latest_commit=datetime(2024, 1, 1, 1, 30, 0),
+                page=1,
+                page_size=50,
             )
         )
         self.assertEqual(1, len(boots))
@@ -957,6 +983,34 @@ class _DatabaseTests(unittest.TestCase):
         self.assertEqual(2, boots[0].last_record.seqno)
         self.assertEqual(_datetime_to_epoch_seconds(datetime(2024, 1, 1, 0, 0, 0)), boots[0].first_record.commit_ts)
         self.assertEqual(_datetime_to_epoch_seconds(datetime(2024, 1, 1, 2, 0, 0)), boots[0].last_record.commit_ts)
+
+    def test_get_boots_returns_latest_page_first(self) -> None:
+        self.db.commit(
+            device_uid=1,
+            device="alpha",
+            records=[
+                _make_record(1, boot_id=100),
+                _make_record(2, boot_id=200),
+                _make_record(3, boot_id=300),
+            ],
+        )
+
+        boots = list(self.db.get_boots("alpha", None, None, page=1, page_size=2))
+        self.assertEqual([300, 200], [boot.boot_id for boot in boots])
+
+    def test_get_boots_second_page_returns_older_boots(self) -> None:
+        self.db.commit(
+            device_uid=1,
+            device="alpha",
+            records=[
+                _make_record(1, boot_id=100),
+                _make_record(2, boot_id=200),
+                _make_record(3, boot_id=300),
+            ],
+        )
+
+        boots = list(self.db.get_boots("alpha", None, None, page=2, page_size=2))
+        self.assertEqual([100], [boot.boot_id for boot in boots])
 
     def test_file_backed_database_persists_data(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -984,7 +1038,12 @@ class _DatabaseTests(unittest.TestCase):
                 return []
 
             def get_boots(
-                self, device: str, earliest_commit: datetime | None, latest_commit: datetime | None
+                self,
+                device: str,
+                earliest_commit: datetime | None,
+                latest_commit: datetime | None,
+                page: int,
+                page_size: int,
             ) -> Iterable[Boot]:
                 return []
 
@@ -1004,14 +1063,14 @@ class _DatabaseTests(unittest.TestCase):
         with self.assertRaises(NotImplementedError):
             _ = list(Database.get_devices(probe))
         with self.assertRaises(NotImplementedError):
-            _ = list(Database.get_boots(probe, "x", None, None))
+            _ = list(Database.get_boots(probe, "x", None, None, 1, 1))
         with self.assertRaises(NotImplementedError):
             _ = list(Database.get_records(probe, "x", [], None, None))
 
         # Execute concrete probe methods as well, to keep line coverage complete.
         self.assertEqual(0, probe.commit(1, "x", []))
         self.assertEqual([], list(probe.get_devices()))
-        self.assertEqual([], list(probe.get_boots("x", None, None)))
+        self.assertEqual([], list(probe.get_boots("x", None, None, 1, 1)))
         self.assertEqual([], list(probe.get_records("x", [], None, None)))
 
     def test_commit_rejects_empty_device(self) -> None:
@@ -1059,7 +1118,7 @@ class _DatabaseTests(unittest.TestCase):
         self.assertTrue(any("SQLite error while committing records" in message for message in captured.output))
 
     def test_get_boots_unknown_device_returns_empty(self) -> None:
-        self.assertEqual([], list(self.db.get_boots("unknown", None, None)))
+        self.assertEqual([], list(self.db.get_boots("unknown", None, None, 1, 50)))
 
     def test_get_records_invalid_range_returns_empty(self) -> None:
         self.assertEqual([], list(self.db.get_records("alpha", [1], 10, 5)))

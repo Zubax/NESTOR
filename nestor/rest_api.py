@@ -32,6 +32,8 @@ if TYPE_CHECKING:
 
 WAIT_MAX_TIMEOUT_S = 30
 WAIT_POLL_INTERVAL_S = 0.25
+BOOTS_DEFAULT_PAGE_SIZE = 50
+BOOTS_MAX_PAGE_SIZE = 200
 RECORDS_DEFAULT_LIMIT = 1000
 RECORDS_MAX_LIMIT = 10000
 DEVICE_UID_MIN = 0
@@ -85,6 +87,9 @@ class DevicesResponse(BaseModel):
 
 class BootsResponse(BaseModel):
     device: str
+    page: int
+    page_size: int
+    has_next: bool
     boots: list[BootDTO]
 
 
@@ -430,25 +435,37 @@ async def get_boots(
     device: Annotated[str, Query(min_length=1, description="Device identifier")],
     earliest_commit: Annotated[datetime | None, Query(description="Lower commit-time bound (ISO-8601)")] = None,
     latest_commit: Annotated[datetime | None, Query(description="Upper commit-time bound (ISO-8601)")] = None,
+    page: Annotated[int, Query(ge=1, description="1-based results page")] = 1,
+    page_size: Annotated[int, Query(ge=1, le=BOOTS_MAX_PAGE_SIZE, description="Boots per page")] = BOOTS_DEFAULT_PAGE_SIZE,
     database: Database = Depends(get_database),
 ) -> BootsResponse:
     LOGGER.debug(
-        "Boots query request: device=%r earliest_commit=%r latest_commit=%r",
+        "Boots query request: device=%r earliest_commit=%r latest_commit=%r page=%d page_size=%d",
         device,
         earliest_commit,
         latest_commit,
+        page,
+        page_size,
     )
     try:
         loop = asyncio.get_running_loop()
         boots = await loop.run_in_executor(
-            None, lambda: list(database.get_boots(device, earliest_commit, latest_commit))
+            None, lambda: list(database.get_boots(device, earliest_commit, latest_commit, page, page_size))
         )
+        has_next = False
+        if len(boots) >= page_size:
+            next_page_boots = await loop.run_in_executor(
+                None, lambda: list(database.get_boots(device, earliest_commit, latest_commit, page + 1, 1))
+            )
+            has_next = len(next_page_boots) > 0
     except Exception:
         LOGGER.critical(
-            "Unexpected exception while querying boots: device=%r earliest_commit=%r latest_commit=%r",
+            "Unexpected exception while querying boots: device=%r earliest_commit=%r latest_commit=%r page=%d page_size=%d",
             device,
             earliest_commit,
             latest_commit,
+            page,
+            page_size,
             exc_info=True,
         )
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="internal server error")
@@ -456,20 +473,25 @@ async def get_boots(
     serialized = [_serialize_boot(boot) for boot in boots]
     if not serialized:
         LOGGER.warning(
-            "Boots query returned no results: device=%r earliest_commit=%r latest_commit=%r",
+            "Boots query returned no results: device=%r earliest_commit=%r latest_commit=%r page=%d page_size=%d",
             device,
             earliest_commit,
             latest_commit,
+            page,
+            page_size,
         )
     else:
         LOGGER.info(
-            "Boots query completed: device=%r result_count=%d earliest_commit=%r latest_commit=%r",
+            "Boots query completed: device=%r result_count=%d earliest_commit=%r latest_commit=%r page=%d page_size=%d has_next=%s",
             device,
             len(serialized),
             earliest_commit,
             latest_commit,
+            page,
+            page_size,
+            has_next,
         )
-    return BootsResponse(device=device, boots=serialized)
+    return BootsResponse(device=device, page=page, page_size=page_size, has_next=has_next, boots=serialized)
 
 
 def _query_records_once(
@@ -779,7 +801,7 @@ class _FakeDatabase(Database):
         self.records_by_device: dict[str, list[CANFrameRecordCommitted]] = {}
         self.records_script_by_device: dict[str, list[list[CANFrameRecordCommitted]]] = {}
         self.fail_methods: set[str] = set()
-        self.last_get_boots_args: tuple[str, datetime | None, datetime | None] | None = None
+        self.last_get_boots_args: tuple[str, datetime | None, datetime | None, int, int] | None = None
         self.last_get_records_args: tuple[str, list[int], int | None, int | None, int | None] | None = None
         self.get_records_call_count = 0
 
@@ -795,12 +817,19 @@ class _FakeDatabase(Database):
         return list(self.devices)
 
     def get_boots(
-        self, device: str, earliest_commit: datetime | None, latest_commit: datetime | None
+        self,
+        device: str,
+        earliest_commit: datetime | None,
+        latest_commit: datetime | None,
+        page: int,
+        page_size: int,
     ) -> Iterable[Boot]:
         if "get_boots" in self.fail_methods:
             raise RuntimeError("forced boots failure")
-        self.last_get_boots_args = (device, earliest_commit, latest_commit)
-        return list(self.boots_by_device.get(device, []))
+        self.last_get_boots_args = (device, earliest_commit, latest_commit, page, page_size)
+        all_boots = sorted(self.boots_by_device.get(device, []), key=lambda boot: boot.boot_id, reverse=True)
+        offset = (page - 1) * page_size
+        return list(all_boots[offset : offset + page_size])
 
     def get_records(
         self,
@@ -1309,6 +1338,9 @@ class _RestAPITests(unittest.TestCase):
         self.assertEqual(200, response.status_code)
         body = response.json()
         self.assertEqual("alpha", body["device"])
+        self.assertEqual(1, body["page"])
+        self.assertEqual(50, body["page_size"])
+        self.assertFalse(body["has_next"])
         self.assertEqual(1, len(body["boots"]))
         self.assertEqual("aa", body["boots"][0]["first_record"]["frame"]["data_hex"])
         self.assertEqual("bb", body["boots"][0]["last_record"]["frame"]["data_hex"])
@@ -1324,7 +1356,10 @@ class _RestAPITests(unittest.TestCase):
     def test_get_boots_unknown_tag_returns_empty_list(self) -> None:
         response = self.client.get("/cf3d/api/v1/boots", params={"device": "unknown"})
         self.assertEqual(200, response.status_code)
-        self.assertEqual({"device": "unknown", "boots": []}, response.json())
+        self.assertEqual(
+            {"device": "unknown", "page": 1, "page_size": 50, "has_next": False, "boots": []},
+            response.json(),
+        )
 
     def test_get_boots_passes_parsed_datetime_filters(self) -> None:
         response = self.client.get(
@@ -1333,21 +1368,61 @@ class _RestAPITests(unittest.TestCase):
                 "device": "alpha",
                 "earliest_commit": "2024-01-01T00:00:00Z",
                 "latest_commit": "2024-01-01T01:00:00Z",
+                "page": 2,
+                "page_size": 7,
             },
         )
         self.assertEqual(200, response.status_code)
         self.assertIsNotNone(self.database.last_get_boots_args)
         assert self.database.last_get_boots_args is not None
-        _, earliest, latest = self.database.last_get_boots_args
+        _, earliest, latest, page, page_size = self.database.last_get_boots_args
         self.assertIsNotNone(earliest)
         self.assertIsNotNone(latest)
         assert earliest is not None and latest is not None
+        self.assertEqual(2, page)
+        self.assertEqual(7, page_size)
         self.assertEqual(int(datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc).timestamp()), int(earliest.timestamp()))
         self.assertEqual(int(datetime(2024, 1, 1, 1, 0, tzinfo=timezone.utc).timestamp()), int(latest.timestamp()))
 
     def test_get_boots_invalid_datetime_rejected(self) -> None:
         response = self.client.get("/cf3d/api/v1/boots", params={"device": "alpha", "earliest_commit": "bad"})
         self.assertEqual(422, response.status_code)
+
+    def test_get_boots_returns_latest_page_with_has_next(self) -> None:
+        self.database.boots_by_device["alpha"] = [
+            Boot(
+                boot_id=boot_id,
+                first_record=self._make_committed_record(seqno=boot_id * 10, boot_id=boot_id, commit_ts=1704067200),
+                last_record=self._make_committed_record(seqno=boot_id * 10 + 1, boot_id=boot_id, commit_ts=1704067201),
+            )
+            for boot_id in (1, 2, 3)
+        ]
+
+        response = self.client.get("/cf3d/api/v1/boots", params={"device": "alpha", "page_size": 2})
+        self.assertEqual(200, response.status_code)
+        body = response.json()
+        self.assertEqual([3, 2], [item["boot_id"] for item in body["boots"]])
+        self.assertEqual(1, body["page"])
+        self.assertEqual(2, body["page_size"])
+        self.assertTrue(body["has_next"])
+
+    def test_get_boots_second_page_returns_remaining_boots(self) -> None:
+        self.database.boots_by_device["alpha"] = [
+            Boot(
+                boot_id=boot_id,
+                first_record=self._make_committed_record(seqno=boot_id * 10, boot_id=boot_id, commit_ts=1704067200),
+                last_record=self._make_committed_record(seqno=boot_id * 10 + 1, boot_id=boot_id, commit_ts=1704067201),
+            )
+            for boot_id in (1, 2, 3)
+        ]
+
+        response = self.client.get("/cf3d/api/v1/boots", params={"device": "alpha", "page": 2, "page_size": 2})
+        self.assertEqual(200, response.status_code)
+        body = response.json()
+        self.assertEqual([1], [item["boot_id"] for item in body["boots"]])
+        self.assertEqual(2, body["page"])
+        self.assertEqual(2, body["page_size"])
+        self.assertFalse(body["has_next"])
 
     def test_get_records_requires_boot_id(self) -> None:
         response = self.client.get("/cf3d/api/v1/records", params={"device": "alpha"})

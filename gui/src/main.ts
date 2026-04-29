@@ -13,6 +13,10 @@ let boots: Boot[] = [];
 let records: Record[] = [];
 let selectedDevice: string | null = null;
 let selectedBoot: number | null = null;
+let bootsPage = 1;
+let bootsHasNext = false;
+
+const BOOTS_PAGE_SIZE = 50;
 
 // Components
 let timeline: Timeline;
@@ -28,6 +32,9 @@ let statusRight: HTMLElement;
 let connectionStatus: HTMLElement;
 let sidePanelToggle: HTMLButtonElement;
 let sidePanel: HTMLElement;
+let bootsPagePrev: HTMLButtonElement;
+let bootsPageNext: HTMLButtonElement;
+let bootsPageLabel: HTMLElement;
 
 // ---------------------------------------------------------------------------
 // Initialization
@@ -58,6 +65,13 @@ function init(): void {
     "side-panel-toggle",
   ) as HTMLButtonElement;
   sidePanel = document.getElementById("side-panel") as HTMLElement;
+  bootsPagePrev = document.getElementById(
+    "boots-page-prev",
+  ) as HTMLButtonElement;
+  bootsPageNext = document.getElementById(
+    "boots-page-next",
+  ) as HTMLButtonElement;
+  bootsPageLabel = document.getElementById("boots-page-label") as HTMLElement;
 
   // Initialize components
   timeline = new Timeline(timelineCanvas, timelineTooltip);
@@ -75,6 +89,16 @@ function init(): void {
 
   bootSelect.addEventListener("change", () => {
     selectBoot(bootSelect.value ? parseInt(bootSelect.value) : null);
+  });
+  bootsPagePrev.addEventListener("click", () => {
+    if (selectedDevice && bootsPage > 1) {
+      void loadBoots(selectedDevice, bootsPage - 1);
+    }
+  });
+  bootsPageNext.addEventListener("click", () => {
+    if (selectedDevice && bootsHasNext) {
+      void loadBoots(selectedDevice, bootsPage + 1);
+    }
   });
 
   // Setup mobile side panel toggle
@@ -120,13 +144,18 @@ async function loadDevices(): Promise<void> {
   }
 }
 
-async function loadBoots(device: string): Promise<void> {
+async function loadBoots(device: string, page = 1): Promise<void> {
   try {
-    statusLeft.textContent = "Loading boots...";
-    const res = await api.getBoots(device);
+    statusLeft.textContent = `Loading boots page ${page}...`;
+    const res = await api.getBoots(device, {
+      page,
+      pageSize: BOOTS_PAGE_SIZE,
+    });
     boots = res.boots || [];
+    bootsPage = res.page;
+    bootsHasNext = res.has_next;
     updateBootList();
-    statusLeft.textContent = `${boots.length} boot session(s)`;
+    statusLeft.textContent = `${boots.length} boot session(s) on page ${bootsPage}`;
   } catch (err) {
     statusLeft.textContent = `Error loading boots: ${err instanceof Error ? err.message : "Unknown"}`;
     console.error("Failed to load boots:", err);
@@ -158,6 +187,8 @@ function selectDevice(device: string | null): void {
   selectedDevice = device;
   selectedBoot = null;
   boots = [];
+  bootsPage = 1;
+  bootsHasNext = false;
   records = [];
 
   // Update UI
@@ -170,7 +201,7 @@ function selectDevice(device: string | null): void {
   timeline.clear();
 
   if (device) {
-    loadBoots(device);
+    void loadBoots(device, 1);
   }
 }
 
@@ -234,6 +265,9 @@ function updateDeviceListSelection(): void {
 function updateBootList(): void {
   bootList.innerHTML = "";
   bootSelect.innerHTML = '<option value="">Select boot...</option>';
+  bootsPageLabel.textContent = selectedDevice ? `Page ${bootsPage}` : "Page -";
+  bootsPagePrev.disabled = !selectedDevice || bootsPage <= 1;
+  bootsPageNext.disabled = !selectedDevice || !bootsHasNext;
 
   for (const b of boots) {
     // List item
