@@ -476,15 +476,7 @@ def _query_records_once(
     seqno_max: int | None,
     limit: int = RECORDS_DEFAULT_LIMIT,
 ) -> tuple[list[CANFrameRecordCommitted], int | None]:
-    records = list(
-        database.get_records(
-            device=device,
-            boot_ids=boot_ids,
-            seqno_min=seqno_min,
-            seqno_max=seqno_max,
-            limit=limit,
-        )
-    )
+    records = list(database.get_records(device, boot_ids, seqno_min, seqno_max, limit))
     records.sort(key=lambda record: record.seqno)
     latest_seqno_seen = records[-1].seqno if records else None
     return records, latest_seqno_seen
@@ -591,14 +583,7 @@ async def get_records(
     try:
         while True:
             poll_count += 1
-            matching_records, latest_seqno_seen = _query_records_once(
-                database,
-                device,
-                boot_ids,
-                seqno_min,
-                seqno_max,
-                limit,
-            )
+            matching_records, latest_seqno_seen = _query_records_once(database, device, boot_ids, seqno_min, seqno_max, limit)
             total_matched = len(matching_records)
             LOGGER.debug(
                 "Records query poll result: device=%r poll_count=%d total_matched=%d latest_seqno_seen=%r",
