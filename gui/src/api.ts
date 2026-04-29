@@ -15,19 +15,12 @@ export const api = {
 
   async getBoots(
     device: string,
-    opts?: {
-      earliest?: string;
-      latest?: string;
-      page?: number;
-      pageSize?: number;
-    },
+    earliest?: string,
+    latest?: string,
   ): Promise<BootsResponse> {
     const params = new URLSearchParams({ device });
-    if (opts?.earliest) params.set("earliest_commit", opts.earliest);
-    if (opts?.latest) params.set("latest_commit", opts.latest);
-    if (opts?.page !== undefined) params.set("page", String(opts.page));
-    if (opts?.pageSize !== undefined)
-      params.set("page_size", String(opts.pageSize));
+    if (earliest) params.set("earliest_commit", earliest);
+    if (latest) params.set("latest_commit", latest);
     const res = await fetch(`${BASE}/boots?${params}`);
     if (!res.ok) throw new Error(`Failed to fetch boots: ${res.status}`);
     return res.json();

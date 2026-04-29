@@ -36,9 +36,6 @@ export interface DevicesResponse {
 
 export interface BootsResponse {
   device: string;
-  page: number;
-  page_size: number;
-  has_next: boolean;
   boots: Boot[];
 }
 
