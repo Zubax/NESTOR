@@ -135,7 +135,7 @@ def _serialize_device_info(device: DeviceInfo) -> DeviceDTO:
     return DeviceDTO(device=device.device, last_heard_ts=device.last_heard_ts, last_uid=device.last_uid)
 
 
-async def _parse_device_uid(
+def _parse_device_uid(
     device_uid: Annotated[str, Query(min_length=1, description="uint64 integer literal (auto-radix)")],
 ) -> int:
     try:
@@ -161,7 +161,7 @@ async def _parse_device_uid(
     return value
 
 
-async def get_database(request: Request) -> Database:
+def get_database(request: Request) -> Database:
     database = getattr(request.app.state, "database", None)
     if not isinstance(database, Database):
         LOGGER.critical(
@@ -358,7 +358,7 @@ async def commit(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def get_devices(
+def get_devices(
     database: Annotated[Database, Depends(get_database)],
 ) -> DevicesResponse:
     try:
@@ -803,12 +803,7 @@ class _FakeDatabase(Database):
         return list(self.boots_by_device.get(device, []))
 
     def get_records(
-        self,
-        device: str,
-        boot_ids: Iterable[int],
-        seqno_min: int | None,
-        seqno_max: int | None,
-        limit: int | None = None,
+        self, device: str, boot_ids: Iterable[int], seqno_min: int | None, seqno_max: int | None
     ) -> Iterable[CANFrameRecordCommitted]:
         if "get_records" in self.fail_methods:
             raise RuntimeError("forced records failure")
@@ -821,7 +816,7 @@ class _FakeDatabase(Database):
             source = list(scripted.pop(0))
         else:
             source = list(self.records_by_device.get(device, []))
-        return self._filter_records(source, boot_list, seqno_min, seqno_max, limit)
+        return self._filter_records(source, boot_list, seqno_min, seqno_max)
 
     @staticmethod
     def _filter_records(
@@ -829,7 +824,6 @@ class _FakeDatabase(Database):
         boot_ids: list[int],
         seqno_min: int | None,
         seqno_max: int | None,
-        limit: int | None = None,
     ) -> list[CANFrameRecordCommitted]:
         if seqno_min is not None and seqno_max is not None and seqno_min > seqno_max:
             return []
@@ -845,8 +839,6 @@ class _FakeDatabase(Database):
                 continue
             out.append(record)
         out.sort(key=lambda value: value.seqno)
-        if limit is not None:
-            out = out[:limit]
         return out
 
 
