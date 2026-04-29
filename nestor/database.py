@@ -573,8 +573,24 @@ class SqliteDatabase(Database):
                 CREATE INDEX IF NOT EXISTS can_frames_device_boot_commit
                     ON can_frames (device_id, boot_id, commit_ts);
 
+                -- Boot-level rows kept current during commit so /boots can query first-class boot entities
+                -- directly instead of aggregating over raw can_frames on every request.
+                CREATE TABLE IF NOT EXISTS boots
+                (
+                    device_id         INTEGER NOT NULL,
+                    boot_id           INTEGER NOT NULL,
+                    first_seqno       INTEGER NOT NULL,
+                    last_seqno        INTEGER NOT NULL,
+                    first_commit_ts   INTEGER NOT NULL,
+                    last_commit_ts    INTEGER NOT NULL,
+                    PRIMARY KEY (device_id, boot_id),
+                    FOREIGN KEY (device_id) REFERENCES devices(device_id)
+                );
+
+                CREATE INDEX IF NOT EXISTS boots_device_commit_span
+                    ON boots (device_id, first_commit_ts, last_commit_ts, boot_id);
+
                 """)
-            self._ensure_boots_table_schema(cursor)
             self._backfill_boots(cursor)
             self._connection.commit()
             LOGGER.info("SQLite schema is ready")
@@ -688,53 +704,6 @@ class SqliteDatabase(Database):
             boot_rows,
         )
         LOGGER.debug("Refreshed boots for device_id=%d rows=%d", device_id, len(boot_rows))
-
-    def _ensure_boots_table_schema(self, cursor: sqlite3.Cursor) -> None:
-        required_columns = {
-            "device_id",
-            "boot_id",
-            "first_seqno",
-            "last_seqno",
-            "first_commit_ts",
-            "last_commit_ts",
-        }
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='boots'")
-        table_exists = cursor.fetchone() is not None
-        if table_exists:
-            cursor.execute("PRAGMA table_info(boots)")
-            existing_columns = {str(row[1]) for row in cursor.fetchall()}
-            missing_columns = required_columns - existing_columns
-            if missing_columns:
-                LOGGER.warning(
-                    "Rebuilding incompatible boots table because required columns are missing: missing=%s",
-                    sorted(missing_columns),
-                )
-                cursor.execute("DROP INDEX IF EXISTS boots_device_commit_span")
-                cursor.execute("DROP TABLE boots")
-                table_exists = False
-
-        if not table_exists:
-            LOGGER.info("Creating boots table")
-            cursor.executescript("""
-                -- Boot-level rows kept current during commit so /boots can query first-class boot entities
-                -- directly instead of aggregating over raw can_frames on every request.
-                CREATE TABLE boots
-                (
-                    device_id         INTEGER NOT NULL,
-                    boot_id           INTEGER NOT NULL,
-                    first_seqno       INTEGER NOT NULL,
-                    last_seqno        INTEGER NOT NULL,
-                    first_commit_ts   INTEGER NOT NULL,
-                    last_commit_ts    INTEGER NOT NULL,
-                    PRIMARY KEY (device_id, boot_id),
-                    FOREIGN KEY (device_id) REFERENCES devices(device_id)
-                );
-                """)
-
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS boots_device_commit_span
-                ON boots (device_id, first_commit_ts, last_commit_ts, boot_id)
-            """)
 
     def _backfill_boots(self, cursor: sqlite3.Cursor) -> None:
         cursor.execute("SELECT COUNT(*) FROM boots")
@@ -1164,91 +1133,6 @@ class _DatabaseTests(unittest.TestCase):
                 cursor = reopened._connection.cursor()
                 cursor.execute("SELECT boot_id, first_seqno, last_seqno FROM boots")
                 self.assertEqual([(100, 1, 2)], [(int(row[0]), int(row[1]), int(row[2])) for row in cursor.fetchall()])
-            finally:
-                reopened.close()
-
-    def test_legacy_incompatible_boots_table_is_rebuilt(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            db_path = Path(temp_dir) / "legacy-incompatible-boots.sqlite3"
-            legacy = sqlite3.connect(str(db_path))
-            legacy.executescript("""
-                CREATE TABLE devices
-                (
-                    device_id        INTEGER PRIMARY KEY,
-                    device           TEXT    NOT NULL UNIQUE,
-                    last_seqno       INTEGER NOT NULL DEFAULT 0,
-                    last_heard_ts    INTEGER NOT NULL DEFAULT 0,
-                    last_device_uid  INTEGER NOT NULL
-                );
-
-                CREATE TABLE can_frames
-                (
-                    id                INTEGER PRIMARY KEY AUTOINCREMENT,
-                    commit_ts         INTEGER NOT NULL,
-                    device_uid        INTEGER NOT NULL,
-                    device_id         INTEGER NOT NULL,
-                    hw_ts_us          INTEGER NOT NULL,
-                    boot_id           INTEGER NOT NULL,
-                    seqno             INTEGER NOT NULL,
-                    can_id_with_flags INTEGER NOT NULL,
-                    data              BLOB    NOT NULL CHECK (length(data) <= 64),
-                    FOREIGN KEY (device_id) REFERENCES devices(device_id),
-                    UNIQUE (device_id, seqno)
-                );
-
-                CREATE TABLE boots
-                (
-                    device_id   INTEGER NOT NULL,
-                    boot_id     INTEGER NOT NULL,
-                    first_seqno INTEGER NOT NULL,
-                    last_seqno  INTEGER NOT NULL,
-                    PRIMARY KEY (device_id, boot_id)
-                );
-                """)
-            legacy.execute(
-                "INSERT INTO devices (device_id, device, last_seqno, last_heard_ts, last_device_uid) VALUES (?, ?, ?, ?, ?)",
-                (1, "alpha", 2, 1704067200, 123),
-            )
-            legacy.executemany(
-                """
-                INSERT INTO can_frames
-                (
-                    commit_ts,
-                    device_uid,
-                    device_id,
-                    hw_ts_us,
-                    boot_id,
-                    seqno,
-                    can_id_with_flags,
-                    data
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                [
-                    (1704067200, 123, 1, 10, 100, 1, 0x123, b"\x01"),
-                    (1704067201, 123, 1, 20, 100, 2, 0x123, b"\x02"),
-                ],
-            )
-            legacy.execute(
-                "INSERT INTO boots (device_id, boot_id, first_seqno, last_seqno) VALUES (?, ?, ?, ?)",
-                (1, 100, 1, 2),
-            )
-            legacy.commit()
-            legacy.close()
-
-            reopened = SqliteDatabase(str(db_path))
-            try:
-                boots = list(reopened.get_boots("alpha", None, None))
-                self.assertEqual(1, len(boots))
-                self.assertEqual(100, boots[0].boot_id)
-
-                cursor = reopened._connection.cursor()
-                cursor.execute("PRAGMA table_info(boots)")
-                columns = [str(row[1]) for row in cursor.fetchall()]
-                self.assertEqual(
-                    ["device_id", "boot_id", "first_seqno", "last_seqno", "first_commit_ts", "last_commit_ts"],
-                    columns,
-                )
             finally:
                 reopened.close()
 
