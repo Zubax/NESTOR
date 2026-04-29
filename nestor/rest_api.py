@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, ClassVar
 from unittest.mock import patch
 
-from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -195,10 +195,10 @@ def get_database(request: Request) -> Database:
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-def commit(
+async def commit(
+    request: Request,
     device_uid: Annotated[int, Depends(_parse_device_uid)],
     database: Annotated[Database, Depends(get_database)],
-    payload: Annotated[bytes, Body()] = b"",
     device: Annotated[str | None, Query(min_length=1, description="Opaque device identifier")] = None,
     device_tag: Annotated[
         str | None,
@@ -232,6 +232,7 @@ def commit(
             device_tag,
         )
 
+    payload = await request.body()
     full_records, trailing_bytes = divmod(len(payload), RECORD_BYTES)
     LOGGER.debug(
         "Commit request received: device_uid=%d device=%r payload_bytes=%d full_records=%d trailing_bytes=%d",
@@ -590,9 +591,7 @@ async def get_records(
     try:
         while True:
             poll_count += 1
-            matching_records, latest_seqno_seen = await loop.run_in_executor(
-                None,
-                _query_records_once,
+            matching_records, latest_seqno_seen = _query_records_once(
                 database,
                 device,
                 boot_ids,
