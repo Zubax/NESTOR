@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
+from uuid import uuid4
 
 from nestor.model import CANFrame, CANFrameRecord, CANFrameRecordCommitted
 
@@ -102,22 +103,28 @@ class SqliteDatabase(Database):
 
     def __init__(self, filename: str | None = None) -> None:
         self._filename = filename if filename is not None else ":memory:"
-        self._lock = threading.RLock()
-        LOGGER.info("Opening SQLite database at %s", self._filename)
-        self._connection = sqlite3.connect(self._filename, check_same_thread=False)
-        self._configure_connection()
+        self._connection_target, self._connection_uri = self._resolve_connection_target(self._filename)
+        self._write_lock = threading.RLock()
+        self._read_lock = threading.RLock()
+        LOGGER.info("Opening SQLite database at %s with dedicated read/write connections", self._filename)
+        self._write_connection = self._open_connection(role="write")
+        self._connection = self._write_connection
+        self._configure_connection(self._write_connection, role="write", query_only=False)
         self._initialize_schema()
+        self._read_connection = self._open_connection(role="read")
+        self._configure_connection(self._read_connection, role="read", query_only=False)
 
     def close(self) -> None:
-        with self._lock:
+        with self._write_lock, self._read_lock:
             LOGGER.info("Closing SQLite database at %s", self._filename)
-            self._connection.close()
+            self._read_connection.close()
+            self._write_connection.close()
 
     def commit(self, device_uid: int, device: str, records: Sequence[CANFrameRecord]) -> int:
         if not device:
             raise ValueError("device must be a non-empty string")
 
-        with self._lock:
+        with self._write_lock:
             LOGGER.debug(
                 "Starting commit transaction: device_uid=%d device=%r records=%d",
                 device_uid,
@@ -126,7 +133,7 @@ class SqliteDatabase(Database):
             )
             try:
                 device_uid_db = _device_uid_to_sqlite_int64(device_uid)
-                cursor = self._connection.cursor()
+                cursor = self._write_connection.cursor()
                 cursor.execute("BEGIN IMMEDIATE")
                 device_id, previous_last_seqno, previous_device_uid = self._ensure_device(
                     cursor=cursor,
@@ -192,7 +199,7 @@ class SqliteDatabase(Database):
                         sorted(duplicate_seqnos),
                     )
 
-                before_changes = self._connection.total_changes
+                before_changes = self._write_connection.total_changes
                 cursor.executemany(
                     """
                     INSERT OR IGNORE INTO can_frames
@@ -209,7 +216,7 @@ class SqliteDatabase(Database):
                     """,
                     rows_to_insert,
                 )
-                inserted_count = self._connection.total_changes - before_changes
+                inserted_count = self._write_connection.total_changes - before_changes
                 LOGGER.debug(
                     "INSERT OR IGNORE finished: device=%r attempted=%d inserted=%d deduplicated=%d",
                     device,
@@ -314,9 +321,9 @@ class SqliteDatabase(Database):
                 raise
 
     def get_devices(self) -> Iterable[DeviceInfo]:
-        with self._lock:
+        with self._read_lock:
             LOGGER.debug("Fetching all known devices")
-            cursor = self._connection.cursor()
+            cursor = self._read_connection.cursor()
             cursor.execute(
                 "SELECT device, last_heard_ts, last_device_uid FROM devices ORDER BY device COLLATE NOCASE ASC"
             )
@@ -334,14 +341,14 @@ class SqliteDatabase(Database):
     def get_boots(
         self, device: str, earliest_commit: datetime | None, latest_commit: datetime | None
     ) -> Iterable[Boot]:
-        with self._lock:
+        with self._read_lock:
             LOGGER.debug(
                 "Fetching boots for device=%r earliest_commit=%r latest_commit=%r",
                 device,
                 earliest_commit,
                 latest_commit,
             )
-            cursor = self._connection.cursor()
+            cursor = self._read_connection.cursor()
             device_id = self._get_device_id(cursor=cursor, device=device)
             if device_id is None:
                 LOGGER.info("No data for unknown device=%r", device)
@@ -455,87 +462,95 @@ class SqliteDatabase(Database):
             LOGGER.info("No boot IDs requested for device=%r", device)
             return []
 
-        with self._lock:
+        with self._read_lock:
             LOGGER.debug(
-                "Fetching records for device=%r boot_ids=%s seqno_min=%r seqno_max=%r",
+                "Fetching records for device=%r boot_ids=%s seqno_min=%r seqno_max=%r limit=%r",
                 device,
                 unique_boot_ids,
                 seqno_min,
                 seqno_max,
+                limit,
             )
-            cursor = self._connection.cursor()
+            cursor = self._read_connection.cursor()
             device_id = self._get_device_id(cursor=cursor, device=device)
             if device_id is None:
                 LOGGER.info("No data for unknown device=%r", device)
                 return []
 
-            result: list[CANFrameRecordCommitted] = []
-            for boot_id_chunk in _chunked(unique_boot_ids, self._SQL_VARIABLE_CHUNK):
-                placeholders = ",".join("?" for _ in boot_id_chunk)
-                query = (
-                    "SELECT hw_ts_us, boot_id, seqno, commit_ts, can_id_with_flags, data "
-                    "FROM can_frames "
-                    f"WHERE device_id=? AND boot_id IN ({placeholders})"
-                )
-                parameters: list[int] = [device_id, *boot_id_chunk]
+            self._load_requested_boot_ids(cursor=cursor, boot_ids=unique_boot_ids)
 
-                if seqno_min is not None:
-                    query += " AND seqno>=?"
-                    parameters.append(seqno_min)
-                if seqno_max is not None:
-                    query += " AND seqno<=?"
-                    parameters.append(seqno_max)
-                query += " ORDER BY seqno ASC"
-
-                cursor.execute(query, parameters)
-                for row in cursor.fetchall():
-                    result.append(
-                        CANFrameRecordCommitted(
-                            hw_ts_us=int(row[0]),
-                            boot_id=int(row[1]),
-                            seqno=int(row[2]),
-                            commit_ts=int(row[3]),
-                            frame=CANFrame(
-                                can_id_with_flags=int(row[4]),
-                                data=bytes(row[5]),
-                            ),
-                        )
-                    )
-            result.sort(key=lambda record: record.seqno)
+            query = """
+                SELECT frame.hw_ts_us, frame.boot_id, frame.seqno, frame.commit_ts, frame.can_id_with_flags, frame.data
+                FROM can_frames AS frame
+                JOIN _requested_boot_ids AS requested_boot
+                    ON requested_boot.boot_id=frame.boot_id
+                WHERE frame.device_id=?
+            """
+            parameters: list[int] = [device_id]
+            if seqno_min is not None:
+                query += " AND frame.seqno>=?"
+                parameters.append(seqno_min)
+            if seqno_max is not None:
+                query += " AND frame.seqno<=?"
+                parameters.append(seqno_max)
+            query += " ORDER BY frame.seqno ASC"
             if limit is not None:
-                result = result[:limit]
+                query += " LIMIT ?"
+                parameters.append(limit)
+
+            result: list[CANFrameRecordCommitted] = []
+            cursor.execute(query, parameters)
+            for row in cursor.fetchall():
+                result.append(
+                    CANFrameRecordCommitted(
+                        hw_ts_us=int(row[0]),
+                        boot_id=int(row[1]),
+                        seqno=int(row[2]),
+                        commit_ts=int(row[3]),
+                        frame=CANFrame(
+                            can_id_with_flags=int(row[4]),
+                            data=bytes(row[5]),
+                        ),
+                    )
+                )
             LOGGER.info(
-                "Fetched %d records for device=%r boots=%d seqno_min=%r seqno_max=%r",
+                "Fetched %d records for device=%r boots=%d seqno_min=%r seqno_max=%r limit=%r",
                 len(result),
                 device,
                 len(unique_boot_ids),
                 seqno_min,
                 seqno_max,
+                limit,
             )
             return result
 
-    def _configure_connection(self) -> None:
-        with self._lock:
-            LOGGER.debug("Configuring SQLite PRAGMA settings for %s", self._filename)
-            cursor = self._connection.cursor()
-            cursor.execute("PRAGMA foreign_keys=ON")
-            cursor.execute(f"PRAGMA busy_timeout={self._BUSY_TIMEOUT_MS}")
-            cursor.execute("PRAGMA temp_store=MEMORY")
-            cursor.execute("PRAGMA synchronous=NORMAL")
-            if self._filename != ":memory:":
-                cursor.execute("PRAGMA journal_mode=WAL")
-                mode_row = cursor.fetchone()
-                LOGGER.info(
-                    "Enabled WAL mode for %s; journal_mode=%s",
-                    self._filename,
-                    None if mode_row is None else mode_row[0],
-                )
-            self._connection.commit()
+    def _configure_connection(self, connection: sqlite3.Connection, *, role: str, query_only: bool) -> None:
+        LOGGER.debug(
+            "Configuring SQLite PRAGMA settings for %s connection on %s query_only=%s",
+            role,
+            self._filename,
+            query_only,
+        )
+        cursor = connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.execute(f"PRAGMA busy_timeout={self._BUSY_TIMEOUT_MS}")
+        cursor.execute("PRAGMA temp_store=MEMORY")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        if self._filename != ":memory:" and role == "write":
+            cursor.execute("PRAGMA journal_mode=WAL")
+            mode_row = cursor.fetchone()
+            LOGGER.info(
+                "Enabled WAL mode for %s; journal_mode=%s",
+                self._filename,
+                None if mode_row is None else mode_row[0],
+            )
+        cursor.execute(f"PRAGMA query_only={'ON' if query_only else 'OFF'}")
+        connection.commit()
 
     def _initialize_schema(self) -> None:
-        with self._lock:
+        with self._write_lock:
             LOGGER.debug("Ensuring SQLite schema is initialized")
-            cursor = self._connection.cursor()
+            cursor = self._write_connection.cursor()
             cursor.executescript("""
                 -- Device dictionary for deduplication and metadata.
                 -- `last_seqno` is a write-through cache to avoid expensive MAX(seqno) lookups on huge tables.
@@ -580,8 +595,27 @@ class SqliteDatabase(Database):
                 CREATE INDEX IF NOT EXISTS can_frames_device_boot_commit
                     ON can_frames (device_id, boot_id, commit_ts);
                 """)
-            self._connection.commit()
+            self._write_connection.commit()
             LOGGER.info("SQLite schema is ready")
+
+    def _open_connection(self, *, role: str) -> sqlite3.Connection:
+        LOGGER.debug(
+            "Opening SQLite %s connection: target=%s uri=%s",
+            role,
+            self._connection_target,
+            self._connection_uri,
+        )
+        return sqlite3.connect(
+            self._connection_target,
+            check_same_thread=False,
+            uri=self._connection_uri,
+        )
+
+    @staticmethod
+    def _resolve_connection_target(filename: str) -> tuple[str, bool]:
+        if filename != ":memory:":
+            return filename, False
+        return f"file:nestor-{uuid4().hex}?mode=memory&cache=shared", True
 
     def _ensure_device(self, cursor: sqlite3.Cursor, device_uid: int, device: str) -> tuple[int, int, int]:
         LOGGER.debug("Ensuring device row exists for %r", device)
@@ -634,6 +668,22 @@ class SqliteDatabase(Database):
                 )
         LOGGER.debug("Fetched %d stored rows for verification", len(result))
         return result
+
+    def _load_requested_boot_ids(self, cursor: sqlite3.Cursor, boot_ids: Sequence[int]) -> None:
+        LOGGER.debug("Loading requested boot IDs into temporary table: count=%d", len(boot_ids))
+        cursor.execute("""
+            CREATE TEMP TABLE IF NOT EXISTS _requested_boot_ids
+            (
+                boot_id INTEGER PRIMARY KEY
+            )
+            """)
+        cursor.execute("DELETE FROM _requested_boot_ids")
+        for boot_id_chunk in _chunked(list(boot_ids), self._SQL_VARIABLE_CHUNK):
+            cursor.executemany(
+                "INSERT INTO _requested_boot_ids (boot_id) VALUES (?)",
+                [(boot_id,) for boot_id in boot_id_chunk],
+            )
+        LOGGER.debug("Temporary boot ID table loaded: count=%d", len(boot_ids))
 
     @staticmethod
     def _record_matches_row(device_uid: int, record: CANFrameRecord, row: _StoredFrameRow) -> bool:
