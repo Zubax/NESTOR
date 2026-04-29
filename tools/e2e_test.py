@@ -246,25 +246,42 @@ def run(argv: list[str] | None = None) -> int:
 
                 # First retrieval check: the uploaded device must become query-visible.
                 devices_body = _http_get_json(f"{base_url}/cf3d/api/v1/devices")
-                devices = list(devices_body.get("devices", []))
+                raw_devices = devices_body.get("devices", [])
+                if not isinstance(raw_devices, list):
+                    raise AssertionError(f"unexpected /devices payload shape: devices={raw_devices!r}")
+                devices = list(raw_devices)
                 known_devices = [str(entry.get("device")) for entry in devices if isinstance(entry, dict)]
                 if device not in known_devices:
                     raise AssertionError(f"uploaded device not found in /devices: devices={devices!r}")
 
                 # Second retrieval check: at least one boot must be discoverable for this device.
                 boots_body = _http_get_json(f"{base_url}/cf3d/api/v1/boots?{urlencode({'device': device})}")
-                boot_entries = list(boots_body.get("boots", []))
+                raw_boot_entries = boots_body.get("boots", [])
+                if not isinstance(raw_boot_entries, list):
+                    raise AssertionError(f"unexpected /boots payload shape: boots={raw_boot_entries!r}")
+                boot_entries = list(raw_boot_entries)
                 if not boot_entries:
                     raise AssertionError(f"no boots returned for {device!r}")
-                boot_ids = sorted(int(entry["boot_id"]) for entry in boot_entries)
+                boot_ids: list[int] = []
+                for entry in boot_entries:
+                    if not isinstance(entry, dict):
+                        raise AssertionError(f"unexpected boot entry shape: {entry!r}")
+                    boot_ids.append(int(entry["boot_id"]))
+                boot_ids.sort()
 
                 # Third retrieval check: fetch records for all discovered boots and validate
                 # cardinality + latest seqno against dataset-derived expectations.
                 query_items: list[tuple[str, str]] = [("device", device), ("limit", "10000")]
                 query_items.extend(("boot_id", str(boot_id)) for boot_id in boot_ids)
                 records_body = _http_get_json(f"{base_url}/cf3d/api/v1/records?{urlencode(query_items, doseq=True)}")
-                latest_seqno_seen = int(records_body.get("latest_seqno_seen", -1))
-                records = list(records_body.get("records", []))
+                raw_latest_seqno_seen = records_body.get("latest_seqno_seen", -1)
+                if not isinstance(raw_latest_seqno_seen, (int, str)):
+                    raise AssertionError(f"unexpected /records latest_seqno_seen type: {raw_latest_seqno_seen!r}")
+                latest_seqno_seen = int(raw_latest_seqno_seen)
+                raw_records = records_body.get("records", [])
+                if not isinstance(raw_records, list):
+                    raise AssertionError(f"unexpected /records payload shape: records={raw_records!r}")
+                records = list(raw_records)
 
                 if len(records) != expected_records:
                     raise AssertionError(

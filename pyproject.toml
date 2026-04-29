@@ -27,3 +27,10 @@ nestor = "nestor.__main__:main"
 
 [tool.black]
 line-length = 120
+
+[tool.mypy]
+exclude = ["^build/"]
+
+[[tool.mypy.overrides]]
+module = ["nox"]
+ignore_missing_imports = true
