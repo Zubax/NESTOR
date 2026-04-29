@@ -426,7 +426,7 @@ def get_devices(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def get_boots(
+def get_boots(
     device: Annotated[str, Query(min_length=1, description="Device identifier")],
     earliest_commit: Annotated[datetime | None, Query(description="Lower commit-time bound (ISO-8601)")] = None,
     latest_commit: Annotated[datetime | None, Query(description="Upper commit-time bound (ISO-8601)")] = None,
@@ -439,10 +439,7 @@ async def get_boots(
         latest_commit,
     )
     try:
-        loop = asyncio.get_running_loop()
-        boots = await loop.run_in_executor(
-            None, lambda: list(database.get_boots(device, earliest_commit, latest_commit))
-        )
+        boots = list(database.get_boots(device, earliest_commit, latest_commit))
     except Exception:
         LOGGER.critical(
             "Unexpected exception while querying boots: device=%r earliest_commit=%r latest_commit=%r",
