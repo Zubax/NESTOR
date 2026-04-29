@@ -731,12 +731,10 @@ class SqliteDatabase(Database):
                 );
                 """)
 
-        cursor.execute(
-            """
+        cursor.execute("""
             CREATE INDEX IF NOT EXISTS boots_device_commit_span
                 ON boots (device_id, first_commit_ts, last_commit_ts, boot_id)
-            """
-        )
+            """)
 
     def _backfill_boots(self, cursor: sqlite3.Cursor) -> None:
         cursor.execute("SELECT COUNT(*) FROM boots")
