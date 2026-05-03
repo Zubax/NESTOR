@@ -115,10 +115,11 @@ def cmd_live(args):
     import dronecan
 
     boot_id = args.boot_id if args.boot_id is not None else int(time.time())
+    seqno_base = args.seqno_base if args.seqno_base is not None else time.time_ns()
     t0 = time.monotonic()
     batch = bytearray()
     last_flush = time.monotonic()
-    state = {"seqno": 0, "captured": 0, "committed": 0, "failed": 0}
+    state = {"seqno": seqno_base - 1, "captured": 0, "committed": 0, "failed": 0}
 
     node = dronecan.make_node(args.iface, node_id=args.node_id)
 
@@ -144,7 +145,13 @@ def cmd_live(args):
     LOG.info(
         "LIVE: %s (node %d) -> %s device=%s uid=%s", args.iface, args.node_id, args.server, args.device, args.device_uid
     )
-    LOG.info("Boot ID: %d | Batch: %d frames | Flush: %.1fs", boot_id, args.batch_size, args.flush_interval)
+    LOG.info(
+        "Boot ID: %d | Seqno base: %d | Batch: %d frames | Flush: %.1fs",
+        boot_id,
+        seqno_base,
+        args.batch_size,
+        args.flush_interval,
+    )
 
     hook_handle = node.can_driver.add_io_hook(hook)
     try:
@@ -178,6 +185,7 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=100)
     parser.add_argument("--flush-interval", type=float, default=5.0)
     parser.add_argument("--boot-id", type=int, default=None)
+    parser.add_argument("--seqno-base", type=int, default=None)
 
     args = parser.parse_args()
     cmd_live(args)
