@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-nestor_ingest: Upload raw CF3D logs to a Nestor server.
+blackstore_ingest: Upload raw CF3D logs to a Blackstore server.
 
 The uploader streams one or more .cf3d files in fixed-size chunks to:
   /cf3d/api/v1/commit
@@ -37,7 +37,7 @@ MAX_ATTEMPTS = 5
 BASE_BACKOFF_S = 1.0
 HELP_HEADER = (__doc__ or "").strip()
 
-LOGGER = logging.getLogger("nestor_ingest")
+LOGGER = logging.getLogger("blackstore_ingest")
 
 
 @dataclass

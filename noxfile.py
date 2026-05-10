@@ -4,7 +4,7 @@ from pathlib import Path
 
 import nox
 
-PACKAGE_DIR = Path("nestor")
+PACKAGE_DIR = Path("blackstore")
 EXCLUDED_TEST_FILE = "__main__.py"
 E2E_SCRIPT_PATH = Path("tools") / "e2e_test.py"
 SERVE_SMOKE_SCRIPT_PATH = Path("tools") / "serve_smoke_test.py"
@@ -32,7 +32,7 @@ def tests(session: nox.Session) -> None:
         "--source",
         PACKAGE_DIR.name,
         "--omit",
-        "*/nestor/__main__.py",
+        "*/blackstore/__main__.py",
         "-m",
         "unittest",
         *modules,
@@ -42,7 +42,7 @@ def tests(session: nox.Session) -> None:
         "report",
         "-m",
         "--omit",
-        "*/nestor/__main__.py",
+        "*/blackstore/__main__.py",
         "--fail-under=80",
     )
 
@@ -72,4 +72,4 @@ def black(session: nox.Session) -> None:
 @nox.session
 def mypy(session: nox.Session) -> None:
     session.install("mypy", ".")
-    session.run("mypy", "nestor")
+    session.run("mypy", "blackstore")

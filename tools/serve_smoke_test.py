@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Smoke-test runner for `nestor serve`.
+Smoke-test runner for `blackstore serve`.
 
 Why this exists:
 - Keep nox orchestration concise by moving procedural logic into a dedicated script.
@@ -19,7 +19,7 @@ import tempfile
 import time
 from pathlib import Path
 
-LOGGER = logging.getLogger("nestor_serve_smoke")
+LOGGER = logging.getLogger("blackstore_serve_smoke")
 DEFAULT_READINESS_TIMEOUT_S = 15.0
 
 
@@ -78,11 +78,11 @@ def _stop_process(process: subprocess.Popen[str]) -> None:
 def run() -> int:
     port = _pick_free_port()
     LOGGER.debug("Selected local TCP port=%d for serve smoke test", port)
-    with tempfile.TemporaryDirectory(prefix="nestor-serve-smoke-") as temp_dir:
+    with tempfile.TemporaryDirectory(prefix="blackstore-serve-smoke-") as temp_dir:
         temp_root = Path(temp_dir)
-        log_file = temp_root / "nestor.log"
+        log_file = temp_root / "blackstore.log"
         command = [
-            "nestor",
+            "blackstore",
             "serve",
             "--host",
             "127.0.0.1",

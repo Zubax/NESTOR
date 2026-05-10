@@ -2,12 +2,12 @@
 
 <img src="https://zubax.com/static/assets/logos/zubax-logo-modern.svg" width="130px">
 
-<h1>Nestor</h1>
+<h1>Blackstore</h1>
 
 _Data collection server for CF3D CAN black box recorders_
 
-[![CI](https://github.com/Zubax/nestor/actions/workflows/ci.yml/badge.svg)](https://github.com/Zubax/nestor/actions/workflows/ci.yml)
-[![PyPI - Version](https://img.shields.io/pypi/v/zubax-nestor)](https://pypi.org/project/zubax-nestor/)
+[![CI](https://github.com/Zubax/blackstore/actions/workflows/ci.yml/badge.svg)](https://github.com/Zubax/blackstore/actions/workflows/ci.yml)
+[![PyPI - Version](https://img.shields.io/pypi/v/zubax-blackstore)](https://pypi.org/project/zubax-blackstore/)
 [![Website](https://img.shields.io/badge/website-zubax.com-black?color=e00000)](https://zubax.com/)
 [![Forum](https://img.shields.io/discourse/https/forum.zubax.com/users.svg?logo=discourse&color=e00000)](https://forum.zubax.com)
 [![Live](https://img.shields.io/badge/live-cyphalcloud.zubax.com-blue)](https://cyphalcloud.zubax.com/)
@@ -32,7 +32,7 @@ graph TD
 
     CF3D == "📡 auto-upload over Wi-Fi<br/>during service/maintenance<br/>fully unattended" ==> COMMIT
 
-    subgraph NESTOR["💾 Nestor Server"]
+    subgraph BLACKSTORE["💾 Blackstore Server"]
         COMMIT["Ingest<br/>FEC repair records"] --> DB[("SQLite<br/>append-only · idempotent<br/>airgap-safe")]
         DB --> API["REST API<br/>devices · boots · records<br/>filtering · long-polling"]
     end
@@ -66,8 +66,8 @@ For details, please reach out to <sales@zubax.com>.
 Install and run the server at the default endpoint <http://0.0.0.0:8000>
 
 ```bash
-pip install zubax-nestor # For development, use `pip install -e .` for editable installation
-nestor serve             # See --help for extra info.
+pip install zubax-blackstore # For development, use `pip install -e .` for editable installation
+blackstore serve             # See --help for extra info.
 ```
 
 Open the API docs at the `/docs` endpoint in your browser, e.g., <http://localhost:8000/docs>.
@@ -81,7 +81,7 @@ The server includes a web-based GUI for browsing CAN data. If the `gui/dist/` di
 ```bash
 cd gui && npm install && npm run build
 cd ..
-nestor serve --db data/
+blackstore serve --db-path data/blackstore.db
 # Open http://localhost:8000
 ```
 
@@ -93,7 +93,7 @@ For active frontend development with hot reload, run two processes:
 
 ```bash
 # Terminal 1: API server
-nestor serve --db data/dev.db
+blackstore serve --db-path data/dev.db
 
 # Terminal 2: Vite dev server (proxies /cf3d/api/v1 to localhost:8000)
 cd gui && npm run dev
@@ -110,26 +110,26 @@ cd gui && npm run dev
 Run behind a local gateway via Unix socket:
 
 ```bash
-nestor serve --uds /run/nestor/nestor.sock
+blackstore serve --uds /run/blackstore/blackstore.sock
 ```
 
-Every runtime option can be configured with env vars like `NESTOR_HOST`/`.._PORT`, `NESTOR_DB_PATH`, etc.
+Every runtime option can be configured with env vars like `BLACKSTORE_HOST`/`.._PORT`, `BLACKSTORE_DB_PATH`, etc.
 CLI arguments override environment values.
 
 ### Store and retrieve CAN frames
 
 Configure Zubax CANFace CF3D devices to use the endpoint where the server is running.
-Existing dumps from CF3D memory cards can also be uploaded manually using [`nestor_ingest.py`](tools/nestor_ingest.py).
+Existing dumps from CF3D memory cards can also be uploaded manually using [`blackstore_ingest.py`](tools/blackstore_ingest.py).
 
 ### Gateway integration
 
 You can run the ASGI app through an external process manager/gateway using the app factory:
 
 ```bash
-export NESTOR_DB_PATH=/var/lib/nestor/nestor.db
-export NESTOR_LOG_FILE=/var/log/nestor/server.log
-export NESTOR_LOG_LEVEL=INFO
-uvicorn --factory nestor.server:create_app_from_env
+export BLACKSTORE_DB_PATH=/var/lib/blackstore/blackstore.db
+export BLACKSTORE_LOG_FILE=/var/log/blackstore/server.log
+export BLACKSTORE_LOG_LEVEL=INFO
+uvicorn --factory blackstore.server:create_app_from_env
 ```
 
 ## API endpoints
@@ -159,11 +159,3 @@ wget -qO- "http://localhost:8000/cf3d/api/v1/boots?device=my+device" | jq
 ```bash
 wget -qO- "http://localhost:8000/cf3d/api/v1/records?device=my+device&boot_id=1" | jq
 ```
-
-## Historical trivia
-
-See [Nestor The Chronicler](https://en.wikipedia.org/wiki/Nestor_the_Chronicler).
-
-<p align="center">
-<img src="data/Нестор-летописец.jpg" width="300" alt="Nestor the Chronicler">
-</p>

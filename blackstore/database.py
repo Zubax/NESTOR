@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-from nestor.model import CANFrame, CANFrameRecord, CANFrameRecordCommitted
+from blackstore.model import CANFrame, CANFrameRecord, CANFrameRecordCommitted
 
 LOGGER = logging.getLogger(__name__)
 

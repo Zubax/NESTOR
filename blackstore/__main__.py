@@ -4,13 +4,13 @@ import argparse
 import sys
 from collections.abc import Sequence
 
-from nestor import __version__
-from nestor.server import parse_serve_config, serve
+from blackstore import __version__
+from blackstore.server import parse_serve_config, serve
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="nestor", description="Nestor CF3D data upload server")
-    parser.add_argument("--version", action="version", version=f"nestor {__version__}")
+    parser = argparse.ArgumentParser(prog="blackstore", description="Blackstore CF3D data upload server")
+    parser.add_argument("--version", action="version", version=f"blackstore {__version__}")
     subparsers = parser.add_subparsers(dest="command")
     subparsers.add_parser(
         "serve",

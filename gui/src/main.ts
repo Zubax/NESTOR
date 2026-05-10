@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Nestor — CF3D CAN Data Viewer
+// Blackstore — CF3D CAN Data Viewer
 // Entry point
 // ---------------------------------------------------------------------------
 
@@ -17,12 +17,12 @@ let selectedBoot: number | null = null;
 // Persistent cache backed by sessionStorage
 const cache = {
   get<T>(key: string): T | null {
-    const raw = sessionStorage.getItem(`nestor:${key}`);
+    const raw = sessionStorage.getItem(`blackstore:${key}`);
     if (!raw) return null;
     try { return JSON.parse(raw) as T; } catch { return null; }
   },
   set(key: string, value: unknown): void {
-    sessionStorage.setItem(`nestor:${key}`, JSON.stringify(value));
+    sessionStorage.setItem(`blackstore:${key}`, JSON.stringify(value));
   },
 };
 

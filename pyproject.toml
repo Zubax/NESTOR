@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "zubax-nestor"
+name = "zubax-blackstore"
 dynamic = ["version"]
 description = "Log upload server for Zubax CANFace CF3D"
 readme = "README.md"
@@ -17,13 +17,13 @@ authors = [
 ]
 
 [tool.setuptools]
-packages = ["nestor"]
+packages = ["blackstore"]
 
 [tool.setuptools.dynamic]
-version = { attr = "nestor.__version__" }
+version = { attr = "blackstore.__version__" }
 
 [project.scripts]
-nestor = "nestor.__main__:main"
+blackstore = "blackstore.__main__:main"
 
 [tool.black]
 line-length = 120

@@ -1,4 +1,4 @@
-# Nestor CF3D Data Viewer
+# Blackstore CF3D Data Viewer
 
 Canvas-based visualization for CF3D CAN data, inspired by [Gerasim](https://github.com/pavel-kirienko/gerasim).
 
