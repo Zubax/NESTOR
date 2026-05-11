@@ -2,9 +2,9 @@
 
 <img src="https://zubax.com/static/assets/logos/zubax-logo-modern.svg" width="130px">
 
-<h1>Nestor</h1>
+<h1>NESTOR</h1>
 
-_Data collection server for CF3D CAN black box recorders_
+_Networked Event STORage_
 
 [![CI](https://github.com/Zubax/nestor/actions/workflows/ci.yml/badge.svg)](https://github.com/Zubax/nestor/actions/workflows/ci.yml)
 [![PyPI - Version](https://img.shields.io/pypi/v/zubax-nestor)](https://pypi.org/project/zubax-nestor/)
@@ -32,7 +32,7 @@ graph TD
 
     CF3D == "📡 auto-upload over Wi-Fi<br/>during service/maintenance<br/>fully unattended" ==> COMMIT
 
-    subgraph NESTOR["💾 Nestor Server"]
+    subgraph NESTOR["💾 NESTOR Server"]
         COMMIT["Ingest<br/>FEC repair records"] --> DB[("SQLite<br/>append-only · idempotent<br/>airgap-safe")]
         DB --> API["REST API<br/>devices · boots · records<br/>filtering · long-polling"]
     end
