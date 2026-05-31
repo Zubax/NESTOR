@@ -64,7 +64,12 @@ class Database(ABC):
 
     @abstractmethod
     def get_records(
-        self, device: str, boot_ids: Iterable[int], seqno_min: int | None, seqno_max: int | None
+        self,
+        device: str,
+        boot_ids: Iterable[int],
+        seqno_min: int | None,
+        seqno_max: int | None,
+        limit: int | None = None,
     ) -> Iterable[CANFrameRecordCommitted]:
         raise NotImplementedError
 
@@ -249,6 +254,11 @@ class SqliteDatabase(Database):
                                 bytes(record.frame.data).hex(),
                             )
 
+                self._refresh_boots(
+                    cursor=cursor,
+                    device_id=device_id,
+                    boot_ids=sorted({record.boot_id for record in records}),
+                )
                 cursor.execute(
                     """
                     UPDATE devices
@@ -348,7 +358,7 @@ class SqliteDatabase(Database):
             cursor.execute(
                 """
                 SELECT
-                    grouped.boot_id,
+                    boot.boot_id,
                     first_frame.hw_ts_us,
                     first_frame.boot_id,
                     first_frame.seqno,
@@ -361,29 +371,19 @@ class SqliteDatabase(Database):
                     last_frame.commit_ts,
                     last_frame.can_id_with_flags,
                     last_frame.data
-                FROM
-                    (
-                        SELECT
-                            boot_id,
-                            MIN(seqno) AS min_seqno,
-                            MAX(seqno) AS max_seqno
-                        FROM can_frames
-                        WHERE device_id=?
-                        GROUP BY boot_id
-                        HAVING
-                            (? IS NULL OR MIN(commit_ts) <= ?)
-                            AND
-                            (? IS NULL OR MAX(commit_ts) >= ?)
-                    ) AS grouped
+                FROM boots AS boot
                 JOIN can_frames AS first_frame
-                    ON first_frame.device_id=?
-                    AND first_frame.boot_id=grouped.boot_id
-                    AND first_frame.seqno=grouped.min_seqno
+                    ON first_frame.device_id=boot.device_id
+                    AND first_frame.boot_id=boot.boot_id
+                    AND first_frame.seqno=boot.first_seqno
                 JOIN can_frames AS last_frame
-                    ON last_frame.device_id=?
-                    AND last_frame.boot_id=grouped.boot_id
-                    AND last_frame.seqno=grouped.max_seqno
-                ORDER BY grouped.boot_id ASC
+                    ON last_frame.device_id=boot.device_id
+                    AND last_frame.boot_id=boot.boot_id
+                    AND last_frame.seqno=boot.last_seqno
+                WHERE boot.device_id=?
+                    AND (? IS NULL OR boot.first_commit_ts <= ?)
+                    AND (? IS NULL OR boot.last_commit_ts >= ?)
+                ORDER BY boot.boot_id ASC
                 """,
                 (
                     device_id,
@@ -391,8 +391,6 @@ class SqliteDatabase(Database):
                     latest_ts,
                     earliest_ts,
                     earliest_ts,
-                    device_id,
-                    device_id,
                 ),
             )
 
@@ -429,7 +427,12 @@ class SqliteDatabase(Database):
             return out
 
     def get_records(
-        self, device: str, boot_ids: Iterable[int], seqno_min: int | None, seqno_max: int | None
+        self,
+        device: str,
+        boot_ids: Iterable[int],
+        seqno_min: int | None,
+        seqno_max: int | None,
+        limit: int | None = None,
     ) -> Iterable[CANFrameRecordCommitted]:
         if seqno_min is not None and seqno_max is not None and seqno_min > seqno_max:
             LOGGER.warning(
@@ -492,6 +495,8 @@ class SqliteDatabase(Database):
                         )
                     )
             result.sort(key=lambda record: record.seqno)
+            if limit is not None:
+                result = result[:limit]
             LOGGER.info(
                 "Fetched %d records for device=%r boots=%d seqno_min=%r seqno_max=%r",
                 len(result),
@@ -567,6 +572,24 @@ class SqliteDatabase(Database):
                 -- Combined commit-time + boot aggregation path.
                 CREATE INDEX IF NOT EXISTS can_frames_device_boot_commit
                     ON can_frames (device_id, boot_id, commit_ts);
+
+                -- Boot-level rows kept current during commit so /boots can query first-class boot entities
+                -- directly instead of aggregating over raw can_frames on every request.
+                CREATE TABLE IF NOT EXISTS boots
+                (
+                    device_id         INTEGER NOT NULL,
+                    boot_id           INTEGER NOT NULL,
+                    first_seqno       INTEGER NOT NULL,
+                    last_seqno        INTEGER NOT NULL,
+                    first_commit_ts   INTEGER NOT NULL,
+                    last_commit_ts    INTEGER NOT NULL,
+                    PRIMARY KEY (device_id, boot_id),
+                    FOREIGN KEY (device_id) REFERENCES devices(device_id)
+                );
+
+                CREATE INDEX IF NOT EXISTS boots_device_commit_span
+                    ON boots (device_id, first_commit_ts, last_commit_ts, boot_id);
+
                 """)
             self._connection.commit()
             LOGGER.info("SQLite schema is ready")
@@ -622,6 +645,64 @@ class SqliteDatabase(Database):
                 )
         LOGGER.debug("Fetched %d stored rows for verification", len(result))
         return result
+
+    def _refresh_boots(self, cursor: sqlite3.Cursor, device_id: int, boot_ids: Sequence[int]) -> None:
+        unique_boot_ids = sorted(set(int(boot_id) for boot_id in boot_ids))
+        if not unique_boot_ids:
+            LOGGER.debug("No boots need refreshing for device_id=%d", device_id)
+            return
+
+        LOGGER.debug("Refreshing boots for device_id=%d boot_count=%d", device_id, len(unique_boot_ids))
+        boot_rows: list[tuple[int, int, int, int, int, int]] = []
+        for boot_id_chunk in _chunked(unique_boot_ids, self._SQL_VARIABLE_CHUNK):
+            placeholders = ",".join("?" for _ in boot_id_chunk)
+            cursor.execute(
+                f"""
+                SELECT
+                    boot_id,
+                    MIN(seqno) AS first_seqno,
+                    MAX(seqno) AS last_seqno,
+                    MIN(commit_ts) AS first_commit_ts,
+                    MAX(commit_ts) AS last_commit_ts
+                FROM can_frames
+                WHERE device_id=? AND boot_id IN ({placeholders})
+                GROUP BY boot_id
+                """,
+                [device_id, *boot_id_chunk],
+            )
+            for row in cursor.fetchall():
+                boot_rows.append(
+                    (
+                        device_id,
+                        int(row[0]),
+                        int(row[1]),
+                        int(row[2]),
+                        int(row[3]),
+                        int(row[4]),
+                    )
+                )
+
+        cursor.executemany(
+            """
+            INSERT INTO boots
+            (
+                device_id,
+                boot_id,
+                first_seqno,
+                last_seqno,
+                first_commit_ts,
+                last_commit_ts
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(device_id, boot_id) DO UPDATE SET
+                first_seqno=excluded.first_seqno,
+                last_seqno=excluded.last_seqno,
+                first_commit_ts=excluded.first_commit_ts,
+                last_commit_ts=excluded.last_commit_ts
+            """,
+            boot_rows,
+        )
+        LOGGER.debug("Refreshed boots for device_id=%d rows=%d", device_id, len(boot_rows))
 
     @staticmethod
     def _record_matches_row(device_uid: int, record: CANFrameRecord, row: _StoredFrameRow) -> bool:
@@ -838,6 +919,22 @@ class _DatabaseTests(unittest.TestCase):
         self.assertEqual([2, 2, 2], [record.boot_id for record in selected])
         self.assertTrue(all(record.commit_ts > 0 for record in selected))
 
+    def test_get_records_limit_is_applied_globally_across_boot_id_chunks(self) -> None:
+        records = [_make_record(seqno=index + 1, boot_id=index + 1) for index in range(self.db._SQL_VARIABLE_CHUNK + 5)]
+        self.db.commit(device_uid=1, device="alpha", records=records)
+
+        selected = list(
+            self.db.get_records(
+                "alpha",
+                [record.boot_id for record in records],
+                None,
+                None,
+                limit=3,
+            )
+        )
+        self.assertEqual([1, 2, 3], [record.seqno for record in selected])
+        self.assertEqual(3, len(selected))
+
     def test_get_boots_uses_overlap_time_window(self) -> None:
         records = [
             _make_record(1, boot_id=100, hw_ts_us=10, data=b"\x01"),
@@ -864,6 +961,9 @@ class _DatabaseTests(unittest.TestCase):
             "UPDATE can_frames SET commit_ts=? WHERE device_id=(SELECT device_id FROM devices WHERE device=?) AND seqno=11",
             (_datetime_to_epoch_seconds(datetime(2024, 1, 2, 1, 0, 0)), "alpha"),
         )
+        device_id = self.db._get_device_id(cursor, "alpha")
+        assert device_id is not None
+        self.db._refresh_boots(cursor, device_id, [100, 200])
         self.db._connection.commit()
 
         boots = list(
@@ -879,6 +979,29 @@ class _DatabaseTests(unittest.TestCase):
         self.assertEqual(2, boots[0].last_record.seqno)
         self.assertEqual(_datetime_to_epoch_seconds(datetime(2024, 1, 1, 0, 0, 0)), boots[0].first_record.commit_ts)
         self.assertEqual(_datetime_to_epoch_seconds(datetime(2024, 1, 1, 2, 0, 0)), boots[0].last_record.commit_ts)
+
+    def test_commit_refreshes_boot_rows(self) -> None:
+        self.db.commit(
+            device_uid=1,
+            device="alpha",
+            records=[
+                _make_record(5, boot_id=100, hw_ts_us=50, data=b"\x05"),
+                _make_record(1, boot_id=100, hw_ts_us=10, data=b"\x01"),
+                _make_record(9, boot_id=200, hw_ts_us=90, data=b"\x09"),
+            ],
+        )
+
+        cursor = self.db._connection.cursor()
+        cursor.execute("""
+            SELECT boot_id, first_seqno, last_seqno, first_commit_ts, last_commit_ts
+            FROM boots
+            WHERE device_id=(SELECT device_id FROM devices WHERE device='alpha')
+            ORDER BY boot_id ASC
+            """)
+        rows = cursor.fetchall()
+        self.assertEqual([(100, 1, 5), (200, 9, 9)], [(int(row[0]), int(row[1]), int(row[2])) for row in rows])
+        self.assertTrue(all(int(row[3]) > 0 for row in rows))
+        self.assertTrue(all(int(row[4]) > 0 for row in rows))
 
     def test_file_backed_database_persists_data(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -911,7 +1034,12 @@ class _DatabaseTests(unittest.TestCase):
                 return []
 
             def get_records(
-                self, device: str, boot_ids: Iterable[int], seqno_min: int | None, seqno_max: int | None
+                self,
+                device: str,
+                boot_ids: Iterable[int],
+                seqno_min: int | None,
+                seqno_max: int | None,
+                limit: int | None = None,
             ) -> Iterable[CANFrameRecordCommitted]:
                 return []
 

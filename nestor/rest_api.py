@@ -297,7 +297,7 @@ async def commit(
         )
 
     try:
-        last_seqno = database.commit(device_uid=device_uid, device=resolved_device, records=accepted_records)
+        last_seqno = database.commit(device_uid, resolved_device, accepted_records)
     except Exception:
         LOGGER.critical(
             "Unexpected commit exception: device_uid=%d device=%r",
@@ -474,8 +474,9 @@ def _query_records_once(
     boot_ids: list[int],
     seqno_min: int | None,
     seqno_max: int | None,
+    limit: int = RECORDS_DEFAULT_LIMIT,
 ) -> tuple[list[CANFrameRecordCommitted], int | None]:
-    records = list(database.get_records(device=device, boot_ids=boot_ids, seqno_min=seqno_min, seqno_max=seqno_max))
+    records = list(database.get_records(device, boot_ids, seqno_min, seqno_max, limit))
     records.sort(key=lambda record: record.seqno)
     latest_seqno_seen = records[-1].seqno if records else None
     return records, latest_seqno_seen
@@ -583,11 +584,7 @@ async def get_records(
         while True:
             poll_count += 1
             matching_records, latest_seqno_seen = _query_records_once(
-                database=database,
-                device=device,
-                boot_ids=boot_ids,
-                seqno_min=seqno_min,
-                seqno_max=seqno_max,
+                database, device, boot_ids, seqno_min, seqno_max, limit
             )
             total_matched = len(matching_records)
             LOGGER.debug(
@@ -599,8 +596,7 @@ async def get_records(
             )
 
             if total_matched > 0:
-                paged_records = matching_records[:limit]
-                serialized = [_serialize_record(record) for record in paged_records]
+                serialized = [_serialize_record(record) for record in matching_records]
                 LOGGER.info(
                     "Records query completed with data: device=%r poll_count=%d total_matched=%d returned=%d",
                     device,
@@ -765,7 +761,7 @@ class _FakeDatabase(Database):
         self.records_script_by_device: dict[str, list[list[CANFrameRecordCommitted]]] = {}
         self.fail_methods: set[str] = set()
         self.last_get_boots_args: tuple[str, datetime | None, datetime | None] | None = None
-        self.last_get_records_args: tuple[str, list[int], int | None, int | None] | None = None
+        self.last_get_records_args: tuple[str, list[int], int | None, int | None, int | None] | None = None
         self.get_records_call_count = 0
 
     def commit(self, device_uid: int, device: str, records: Sequence[CANFrameRecord]) -> int:
@@ -788,12 +784,17 @@ class _FakeDatabase(Database):
         return list(self.boots_by_device.get(device, []))
 
     def get_records(
-        self, device: str, boot_ids: Iterable[int], seqno_min: int | None, seqno_max: int | None
+        self,
+        device: str,
+        boot_ids: Iterable[int],
+        seqno_min: int | None,
+        seqno_max: int | None,
+        limit: int | None = None,
     ) -> Iterable[CANFrameRecordCommitted]:
         if "get_records" in self.fail_methods:
             raise RuntimeError("forced records failure")
         boot_list = [int(boot_id) for boot_id in boot_ids]
-        self.last_get_records_args = (device, boot_list, seqno_min, seqno_max)
+        self.last_get_records_args = (device, boot_list, seqno_min, seqno_max, limit)
         self.get_records_call_count += 1
 
         scripted = self.records_script_by_device.get(device)
@@ -801,7 +802,7 @@ class _FakeDatabase(Database):
             source = list(scripted.pop(0))
         else:
             source = list(self.records_by_device.get(device, []))
-        return self._filter_records(source, boot_list, seqno_min, seqno_max)
+        return self._filter_records(source, boot_list, seqno_min, seqno_max, limit)
 
     @staticmethod
     def _filter_records(
@@ -809,6 +810,7 @@ class _FakeDatabase(Database):
         boot_ids: list[int],
         seqno_min: int | None,
         seqno_max: int | None,
+        limit: int | None,
     ) -> list[CANFrameRecordCommitted]:
         if seqno_min is not None and seqno_max is not None and seqno_min > seqno_max:
             return []
@@ -824,6 +826,8 @@ class _FakeDatabase(Database):
                 continue
             out.append(record)
         out.sort(key=lambda value: value.seqno)
+        if limit is not None:
+            out = out[:limit]
         return out
 
 
