@@ -61,6 +61,12 @@ graph TD
 
 For details, please reach out to <sales@zubax.com>.
 
+## Demo
+
+<a href="https://youtu.be/YgZulY8uraQ"><img src="https://img.youtube.com/vi/YgZulY8uraQ/maxresdefault.jpg" width="560" alt="Replaying DroneCAN traffic from GNSS with Nestor"></a>
+
+▶️ **[Replaying DroneCAN traffic from GNSS with Nestor](https://youtu.be/YgZulY8uraQ)**
+
 ## Usage
 
 Install and run the server at the default endpoint <http://0.0.0.0:8000>

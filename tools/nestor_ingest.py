@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Sequence
 
 COMMIT_PATH = "/cf3d/api/v1/commit"
-CHUNK_BYTES = 8 * 1024 * 1024
+CHUNK_BYTES = 256 * 1024  # multiple of the 256-byte record size; small enough to clear typical proxy limits (HTTP 413)
 REQUEST_TIMEOUT_S = 30.0
 MAX_ATTEMPTS = 5
 BASE_BACKOFF_S = 1.0
