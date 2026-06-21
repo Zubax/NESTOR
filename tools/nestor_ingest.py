@@ -14,6 +14,9 @@ Behavior summary:
 Notes:
   - This tool sends opaque bytes; it does not parse CF3D payload contents.
   - The server may still reject malformed data at decode/parse time.
+
+Usage:
+    python tools/nestor_ingest.py --server http://127.0.0.1:8000 --device_uid 0x123 --device "Vehicle-A" data/*.cf3d
 """
 
 from __future__ import annotations

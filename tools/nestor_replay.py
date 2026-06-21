@@ -4,7 +4,7 @@ nestor_replay: Replay CAN frames stored on a Nestor server onto a (v)CAN interfa
 
 The inverse of nestor_ingest: instead of pushing .cf3d records to the server, this
 pulls a device's recorded frames back out via the REST query API
-(GET /cf3d/api/v1/records) and transmits them with python-can, so any DroneCAN tool
+(GET /cf3d/api/v1/records) and transmits them with python-can, so any CAN tool
 (e.g. the DroneCAN GUI Tool) can decode/plot an archived session as if it were live.
 
 Records are paged by seqno (server caps each page; default/max page size 10000) and
