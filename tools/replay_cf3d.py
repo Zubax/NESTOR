@@ -1,11 +1,7 @@
 #!/usr/bin/env python3
 """
 replay_cf3d: Replay CAN frames from a .cf3d file onto a (v)CAN interface.
-
-Reads RECORD_BYTES-sized records, unboxes them with the FEC envelope, decodes
-the same user-data layout produced by tools/export_cf3d.py, and transmits the
-frames via python-can. Inter-frame delays are derived from hw_ts_us so the
-replay preserves the original timing.
+Inter-frame delays are derived from hw_ts_us so the replay preserves the original timing.
 
 Usage:
     python tools/replay_cf3d.py --iface vcan0 dump.cf3d
