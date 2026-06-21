@@ -1,10 +1,6 @@
 #!/usr/bin/env python3
 """
 export_cf3d: Dump CAN frames stored in a Nestor SQLite database to a .cf3d file.
-
-The resulting file is byte-identical in format to the .cf3d records the server
-ingests via /cf3d/api/v1/commit, so it can be replayed with nestor_ingest.
-
 Usage:
     python tools/export_cf3d.py --db nestor.db --device "my device" --out dump.cf3d
     python tools/export_cf3d.py --db nestor.db --device "my device" --boot-id 0 --out dump.cf3d
