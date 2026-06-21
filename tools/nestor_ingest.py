@@ -14,6 +14,9 @@ Behavior summary:
 Notes:
   - This tool sends opaque bytes; it does not parse CF3D payload contents.
   - The server may still reject malformed data at decode/parse time.
+
+Usage:
+    python tools/nestor_ingest.py --server http://127.0.0.1:8000 --device_uid 0x123 --device "Vehicle-A" data/*.cf3d
 """
 
 from __future__ import annotations
@@ -31,7 +34,7 @@ from pathlib import Path
 from typing import Sequence
 
 COMMIT_PATH = "/cf3d/api/v1/commit"
-CHUNK_BYTES = 8 * 1024 * 1024
+CHUNK_BYTES = 256 * 1024  # multiple of the 256-byte record size; small enough to clear typical proxy limits (HTTP 413)
 REQUEST_TIMEOUT_S = 30.0
 MAX_ATTEMPTS = 5
 BASE_BACKOFF_S = 1.0
