@@ -1,15 +1,10 @@
 #!/usr/bin/env python3
 """
 nestor_replay: Replay CAN frames stored on a Nestor server onto a (v)CAN interface.
-
-The inverse of nestor_ingest: instead of pushing .cf3d records to the server, this
-pulls a device's recorded frames back out via the REST query API
-(GET /cf3d/api/v1/records) and transmits them with python-can, so any CAN tool
-(e.g. the DroneCAN GUI Tool) can decode/plot an archived session as if it were live.
-
-Records are paged by seqno (server caps each page; default/max page size 10000) and
-replayed with inter-frame delays derived from hw_ts_us, preserving original timing.
+Records are replayed with inter-frame delays derived from hw_ts_us, preserving original timing.
 With --follow it long-polls for new records and keeps streaming (live tail).
+
+Set up vcan0 first with `sudo modprobe vcan && sudo ip link add dev vcan0 type vcan && sudo ip link set up vcan0`.
 
 Usage:
     python tools/nestor_replay.py --server https://cyphalcloud.zubax.com \
@@ -18,8 +13,6 @@ Usage:
         --device my-drone --boot-id 1 --iface vcan0 --speed 2.0
     python tools/nestor_replay.py --server http://localhost:8000 \
         --device my-drone --boot-id 1 --iface vcan0 --follow
-
-Set up vcan0 first with `sudo modprobe vcan && sudo ip link add dev vcan0 type vcan && sudo ip link set up vcan0`.
 """
 
 from __future__ import annotations
