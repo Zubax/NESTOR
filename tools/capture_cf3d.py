@@ -1,18 +1,6 @@
 #!/usr/bin/env python3
 """
 capture_cf3d: Record live CAN frames from a (v)CAN interface into a .cf3d file.
-
-This is a passive listener: it reads frames from a python-can interface (e.g. a
-socketcan `can0` backed by a Zubax Babel via slcand) and writes each one into a
-.cf3d file using the exact record layout produced by tools/export_cf3d.py, so
-the capture can be replayed unchanged with tools/replay_cf3d.py.
-
-It does NOT allocate node IDs. On a bus with plug-and-play nodes (e.g. a GNSS),
-run an allocation server alongside it -- the DroneCAN GUI Tool's dynamic node ID
-allocation server is the easy choice -- so the nodes obtain IDs and start
-publishing while this tool records. socketcan lets the GUI and this recorder
-read the same interface simultaneously.
-
 Usage:
     python tools/capture_cf3d.py --channel can0 --out gnss.cf3d
     python tools/capture_cf3d.py --channel can0 --duration 60 --out gnss.cf3d
